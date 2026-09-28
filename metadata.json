@@ -1,0 +1,8 @@
+{
+  "name": "Node js GST Zen Service Monitor",
+  "description": "Dashboard to monitor and manage the GST Zen PHP Windows service.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
