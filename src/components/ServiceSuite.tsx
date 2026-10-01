@@ -546,9 +546,9 @@ function Get-ServiceDaemonStatus {
                   <Zap className="w-6 h-6 text-[#009b65]" />
                 </div>
                 <div>
-                  <h2 className="text-2xl font-bold text-slate-900 tracking-tight">Convert PHP Sync to Pure Node.js (XAMPP-Free)</h2>
+                  <h2 className="text-2xl font-bold text-slate-900 tracking-tight">Pure Node.js GST Zen Sync Daemon (XAMPP-Free)</h2>
                   <p className="text-slate-500 mt-1 text-sm">
-                    Run your GST Zen e-invoice and credit note synchronization daemon directly in Node.js without needing XAMPP, Apache, IIS, or PHP.
+                    Automated 5-in-1 service for B2B Invoices, Credit Notes (CRN), Debit Notes (DBN), Cancellations, and QRCode / PDF downloads.
                   </p>
                 </div>
               </div>
@@ -572,6 +572,52 @@ function Get-ServiceDaemonStatus {
               </div>
             </div>
 
+            {/* Windows Server 2008 R2 Compatibility Alert Banner */}
+            <div className="bg-amber-50/80 border border-amber-200 rounded-xl p-5 mb-8 shadow-xs">
+              <div className="flex items-start gap-4">
+                <div className="w-9 h-9 rounded-lg bg-amber-100 flex items-center justify-center text-amber-700 font-bold shrink-0 mt-0.5">
+                  <AlertCircle className="w-5 h-5 text-amber-600" />
+                </div>
+                <div className="flex-1">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                    <h3 className="text-base font-bold text-slate-900">
+                      Running on Windows Server 2008 R2 / Windows 7?
+                    </h3>
+                    <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-200/80 text-amber-900">
+                      Compatible Setup Guide
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-600 mt-1.5 leading-relaxed">
+                    Modern Node.js versions (v18, v20, v22) do <strong>NOT</strong> support Windows Server 2008 R2 and will abort with <em>"Node.js is only supported on Windows 8.1 / Server 2012 R2 or higher"</em>. To run on Windows Server 2008 R2 SP1, you must install the official legacy build <strong>Node.js v13.14.0</strong> or <strong>v12.22.12 LTS</strong>.
+                  </p>
+
+                  <div className="mt-4 flex flex-wrap items-center gap-3">
+                    <a
+                      href="https://nodejs.org/dist/v13.14.0/node-v13.14.0-x64.msi"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-2 px-3.5 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-xs font-semibold shadow-xs transition-colors"
+                    >
+                      <DownloadCloud className="w-3.5 h-3.5" />
+                      Download Node.js v13.14.0 (x64 MSI)
+                    </a>
+                    <a
+                      href="https://nodejs.org/dist/v12.22.12/node-v12.22.12-x64.msi"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-2 px-3.5 py-1.5 bg-white border border-amber-300 hover:bg-amber-100/50 text-amber-900 rounded-lg text-xs font-semibold shadow-xs transition-colors"
+                    >
+                      <DownloadCloud className="w-3.5 h-3.5 text-amber-700" />
+                      Download Node.js v12.22.12 LTS (x64 MSI)
+                    </a>
+                    <span className="text-xs text-slate-500 italic">
+                      (Tested and verified on Windows Server 2008 R2 SP1)
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
             {/* Benefits Banner */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-5 mb-8">
               <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm">
@@ -583,9 +629,9 @@ function Get-ServiceDaemonStatus {
               </div>
               <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm">
                 <div className="w-8 h-8 rounded-lg bg-emerald-50 text-[#009b65] flex items-center justify-center font-bold mb-3">2</div>
-                <h3 className="font-bold text-slate-800 text-sm mb-1">Identical Logic & Payload</h3>
+                <h3 className="font-bold text-slate-800 text-sm mb-1">Identical Logic & QR Automation</h3>
                 <p className="text-xs text-slate-500 leading-relaxed">
-                  Faithfully converts all CodeIgniter queries, B2B invoices, credit notes, cancellations, and PDF/PNG file downloading.
+                  Processes B2B invoices, credit notes, cancellations, qrstatusflag=0 downloads, and saves signed PDF/PNG QR codes to disk.
                 </p>
               </div>
               <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm">

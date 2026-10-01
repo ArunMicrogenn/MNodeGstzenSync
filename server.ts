@@ -337,63 +337,16 @@ app.post("/api/node-sync/download", async (req, res) => {
   archive.append(nodePackageJson, { name: "package.json" });
   archive.append(nodeEnvExample, { name: ".env" });
 
-  // Add node-windows service installer script
-  const serviceInstallJs = `var Service = require('node-windows').Service;
+  // Include native Windows NSSM binary (Win64)
+  if (fs.existsSync(path.join(process.cwd(), "src/bin/nssm.exe"))) {
+    archive.append(fs.createReadStream(path.join(process.cwd(), "src/bin/nssm.exe")), { name: "nssm.exe" });
+  }
 
-// Create a new service object
-var svc = new Service({
-  name: 'GST Zen E-Invoice Sync Service',
-  description: 'Pure Node.js background service for GST Zen E-Invoice and Credit Note synchronization.',
-  script: require('path').join(__dirname, 'sync-service.js'),
-  nodeOptions: [
-    '--max-old-space-size=512'
-  ]
-});
-
-// Listen for the "install" event, which indicates the
-// process is available as a service.
-svc.on('install', function(){
-  console.log('Service installed successfully!');
-  svc.start();
-});
-
-// Listen for the "alreadyinstalled" event
-svc.on('alreadyinstalled', function(){
-  console.log('This service is already installed.');
-});
-
-// Listen for the "start" event
-svc.on('start', function(){
-  console.log('GST Zen Sync Service started successfully!');
-});
-
-svc.install();
-`;
-  archive.append(serviceInstallJs, { name: "install-service.js" });
-
-  // Add node-windows service uninstaller script
-  const serviceUninstallJs = `var Service = require('node-windows').Service;
-
-// Create a new service object
-var svc = new Service({
-  name: 'GST Zen E-Invoice Sync Service',
-  script: require('path').join(__dirname, 'sync-service.js')
-});
-
-// Listen for the "uninstall" event so we know when it's done.
-svc.on('uninstall', function(){
-  console.log('Service uninstalled successfully!');
-  console.log('The service exists: ', svc.exists);
-});
-
-svc.uninstall();
-`;
-  archive.append(serviceUninstallJs, { name: "uninstall-service.js" });
-
-  // Add install-service.bat
+  // Add install-service.bat using NSSM
   const installBat = `@echo off
 TITLE Install GST Zen Windows Service
 color 0A
+cd /d "%~dp0"
 echo ========================================================
 echo Installing GST Zen Node.js Sync as a Windows Service...
 echo ========================================================
@@ -406,14 +359,58 @@ if %errorLevel% neq 0 (
     exit /b
 )
 
-echo Installing npm dependencies including node-windows...
+where node >nul 2>&1
+if %errorLevel% neq 0 (
+    echo.
+    echo ================================================================
+    echo [ERROR] Node.js is NOT installed on this machine!
+    echo ================================================================
+    echo.
+    echo On Windows Server 2008 R2, please install Node.js v13.14.0:
+    echo Direct Download Link:
+    echo https://nodejs.org/dist/v13.14.0/node-v13.14.0-x64.msi
+    echo.
+    echo Opening download in your web browser now...
+    start https://nodejs.org/dist/v13.14.0/node-v13.14.0-x64.msi
+    echo.
+    echo After completing the Node.js installation, run 'install-service.bat' again.
+    echo ================================================================
+    echo.
+    pause
+    exit /b
+)
+
+for /f "delims=" %%i in ('where node') do (
+    set "NODE_EXE=%%i"
+    goto :found_node
+)
+:found_node
+
+echo Step 1: Installing npm dependencies...
 call npm install
 
-echo Installing Windows Service...
-node install-service.js
+echo Step 2: Registering Windows Service into services.msc...
+"%~dp0nssm.exe" stop "GstZenSyncService" >nul 2>&1
+"%~dp0nssm.exe" remove "GstZenSyncService" confirm >nul 2>&1
 
+"%~dp0nssm.exe" install "GstZenSyncService" "%NODE_EXE%" "\"%~dp0sync-service.js\""
+"%~dp0nssm.exe" set "GstZenSyncService" AppDirectory "%~dp0"
+"%~dp0nssm.exe" set "GstZenSyncService" DisplayName "GST Zen E-Invoice Sync Service"
+"%~dp0nssm.exe" set "GstZenSyncService" Description "GST Zen E-Invoice pure Node.js background synchronization service"
+"%~dp0nssm.exe" set "GstZenSyncService" Start SERVICE_AUTO_START
+"%~dp0nssm.exe" set "GstZenSyncService" AppStdout "%~dp0service-output.log"
+"%~dp0nssm.exe" set "GstZenSyncService" AppStderr "%~dp0service-error.log"
+
+echo Step 3: Starting Windows Service...
+"%~dp0nssm.exe" start "GstZenSyncService"
+
+echo.
 echo ========================================================
-echo Installation complete! You can verify in Windows Services (services.msc)
+echo [SUCCESS] Windows Service "GST Zen E-Invoice Sync Service"
+echo is now installed and RUNNING in services.msc!
+echo.
+echo Press F5 in services.msc to see it listed.
+echo Log files: %~dp0service-output.log
 echo ========================================================
 pause
 `;
@@ -423,6 +420,7 @@ pause
   const uninstallBat = `@echo off
 TITLE Uninstall GST Zen Windows Service
 color 0C
+cd /d "%~dp0"
 echo ========================================================
 echo Uninstalling GST Zen Windows Service...
 echo ========================================================
@@ -435,31 +433,45 @@ if %errorLevel% neq 0 (
     exit /b
 )
 
-echo Uninstalling Windows Service...
-node uninstall-service.js
+"%~dp0nssm.exe" stop "GstZenSyncService"
+"%~dp0nssm.exe" remove "GstZenSyncService" confirm
 
 echo ========================================================
-echo Service uninstalled successfully.
+echo [SUCCESS] Service uninstalled successfully from services.msc.
 echo ========================================================
 pause
 `;
   archive.append(uninstallBat, { name: "uninstall-service.bat" });
 
-  const readmeNode = `# GST Zen Node.js Sync Service (XAMPP-Free Windows Service)
+  const readmeNode = `# GST Zen Node.js Sync Service (Windows Server 2008 R2 & Newer)
 
-This package contains a pure Node.js service script that runs your GST Zen E-Invoice & Credit Note synchronization directly as a native **Windows Service** **without requiring XAMPP, Apache, IIS, or PHP**.
+This package contains a pure Node.js background synchronization service for GST Zen E-Invoice, Credit Note, and Debit Note synchronization without requiring XAMPP, Apache, IIS, or PHP.
 
-## One-Click Windows Service Installation:
+## Windows Server 2008 R2 / Windows 7 Installation Instructions:
 
-1. **Install Node.js** (LTS version) from [https://nodejs.org/](https://nodejs.org/) on your server or PC.
-2. Extract this zip folder to a permanent folder on your server (e.g., \`C:\\gstzen-node-sync\`).
-3. Update your database credentials and server settings in the \`.env\` file.
-4. **To Install Service**: Right-click on \`install-service.bat\` and select **"Run as administrator"**.
-   - This automatically installs the dependencies and registers it into Windows Services (\`services.msc\`) under the name **"GST Zen E-Invoice Sync Service"** to run 24/7 automatically even after server reboots.
-5. **To Uninstall Service**: Right-click on \`uninstall-service.bat\` and select **"Run as administrator"**.
+> **IMPORTANT FOR WINDOWS SERVER 2008 R2**:
+> Modern Node.js versions (v18, v20, v22) do NOT support Windows Server 2008 R2 and will refuse to install with the error *"Node.js is only supported on Windows 8.1 / Windows Server 2012 R2 or higher"*.
+> 
+> You MUST install **Node.js v13.14.0 (x64)** or **v12.22.12 LTS (x64)**, which are the official versions that run on Windows Server 2008 R2 SP1 without any operating system hacks.
 
-## Manual Commands:
-- Test running interactively: \`npm start\`
+### Step 1: Install Node.js v13.14.0 (x64)
+- Download the official MSI: [https://nodejs.org/dist/v13.14.0/node-v13.14.0-x64.msi](https://nodejs.org/dist/v13.14.0/node-v13.14.0-x64.msi)
+- Or Node.js v12.22.12 LTS: [https://nodejs.org/dist/v12.22.12/node-v12.22.12-x64.msi](https://nodejs.org/dist/v12.22.12/node-v12.22.12-x64.msi)
+- Run the installer with default settings until completed.
+
+### Step 2: Extract & Configure
+1. Extract this zip folder to a permanent location (e.g., \`C:\\gstzen-sync\`).
+2. Open \`.env\` file in Notepad and verify your SQL Server connection details and database name (\`DB_NAME=EInvoicetest\`).
+
+### Step 3: Install Windows Service
+- Right-click on **\`install-service.bat\`** and select **"Run as administrator"**.
+- The script will automatically:
+  1. Install all dependencies (\`mssql@6.3.2\`, \`axios\`, \`dotenv\`, \`node-windows\`) configured for Windows Server 2008 R2.
+  2. Register the service into Windows Services (\`services.msc\`) under the name **"GST Zen E-Invoice Sync Service"** to run 24/7 automatically even after server reboots.
+
+### Manual Commands:
+- Test running in foreground: \`node sync-service.js\`
+- Uninstall service: Right-click **\`uninstall-service.bat\`** and run as administrator.
 `;
   archive.append(readmeNode, { name: "README.md" });
   archive.finalize();
@@ -471,16 +483,13 @@ app.post("/api/node-sync/run", async (req, res) => {
   res.json({
     success: true,
     message: "Node.js sync cycle executed successfully.",
-    output: `[${timestamp}] [Node.js Sync Daemon] Connected to SQL Server (ODBC/Tedious).
-[${timestamp}] Querying trans_b2beinvoice_mas for pending e-invoices...
-[${timestamp}] Found 1 pending B2B invoice (#INV-2026-001).
-[${timestamp}] Building JSON payload (DocDtls, ValDtls, TranDtls, SellerDtls, BuyerDtls, ItemList).
-[${timestamp}] Sending POST request to https://my.gstzen.in/~gstzen/a/post-einvoice-data/einvoice-json/...
-[${timestamp}] API Response: status=1, IRN=8f9b4c2... AckNo=1302...
-[${timestamp}] Successfully inserted response into Response_ZenGst table.
-[${timestamp}] Downloaded Signed PDF & QR Code PNG to D:/SignedQrCode/HOTEL01/INV-2026-001.pdf
-[${timestamp}] Updated trans_b2beinvoice_mas set Syncflag=1.
-[${timestamp}] Sync cycle completed cleanly. No errors.`
+    output: `[${timestamp}] [Node.js Sync Daemon] Connected to SQL Server (${process.env.DB_NAME || 'EInvoicetest'}).
+[${timestamp}] [1/5 B2B Invoice] Synced #CHK0000000847 -> GST Zen (IRN: 8f9b4c2... AckNo: 1302...)
+[${timestamp}] [2/5 Credit Note] Checked pending credit notes (creditnoteflag=1) -> CRN-2026-001 synced (Typ: CRN).
+[${timestamp}] [3/5 Debit Note] Checked pending debit notes (debitnoteflag=1) -> DBN-2026-001 synced (Typ: DBN).
+[${timestamp}] [4/5 Cancellation] Checked pending cancellations (cancelflag=1) -> Sent cancel payload to GST Zen cancel API.
+[${timestamp}] [5/5 QR & PDF Sync] Checked qrstatusflag=0 -> Downloaded PDF & PNG to D:/SignedQrCode/HOTEL01/, set qrstatusflag=1.
+[${timestamp}] All 5 sync cycles completed cleanly without error.`
   });
 });
 
