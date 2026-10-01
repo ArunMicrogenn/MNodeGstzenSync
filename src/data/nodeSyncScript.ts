@@ -22,12 +22,25 @@ export const nodeSyncJsCode = [
   "const path = require('path');",
   "require('dotenv').config();",
   "",
+  "let serverHost = process.env.DB_SERVER || 'localhost';",
+  "let instanceName = process.env.DB_INSTANCE || undefined;",
+  "let serverPort = process.env.DB_PORT ? parseInt(process.env.DB_PORT, 10) : undefined;",
+  "",
+  "if (serverHost.includes('\\\\')) {",
+  "  const parts = serverHost.split('\\\\');",
+  "  serverHost = parts[0] || 'localhost';",
+  "  if (serverHost === '.' || serverHost === '(local)') serverHost = 'localhost';",
+  "  instanceName = parts[1];",
+  "}",
+  "",
   "const dbConfig = {",
-  "  server: process.env.DB_SERVER || 'localhost',",
-  "  database: process.env.DB_NAME || 'EInvoicetest',",
+  "  server: serverHost,",
+  "  port: serverPort,",
+  "  database: process.env.DB_NAME || 'acacianew',",
   "  user: process.env.DB_USER || 'sa',",
   "  password: process.env.DB_PASSWORD || 'Mgenn@123',",
   "  options: {",
+  "    instanceName: instanceName,",
   "    encrypt: false,",
   "    enableArithAbort: true,",
   "    trustServerCertificate: true",
@@ -84,6 +97,16 @@ export const nodeSyncJsCode = [
   "  return out;",
   "}",
   "",
+  "function formatGstDate(dt) {",
+  "  if (!dt) return '';",
+  "  const d = new Date(dt);",
+  "  if (isNaN(d.getTime())) return String(dt);",
+  "  const day = d.getDate();",
+  "  const month = d.getMonth() + 1;",
+  "  const year = d.getFullYear();",
+  "  return (day < 10 ? '0' + day : day) + '/' + (month < 10 ? '0' + month : month) + '/' + year;",
+  "}",
+  "",
   "function buildPayload(row, items, docType, extraDtls) {",
   "  const buyerEmail = row.buyeremail || '';",
   "  const sellerEmail = row.selleremail || '';",
@@ -93,7 +116,7 @@ export const nodeSyncJsCode = [
   "",
   "  const payload = {",
   "    DocDtls: {",
-  "      Dt: new Date(row.billdate).toLocaleDateString('en-GB'),",
+  "      Dt: formatGstDate(row.billdate),",
   "      No: row.billno,",
   "      Typ: docType || row.typ || 'INV'",
   "    },",
@@ -481,16 +504,16 @@ export const nodePackageJson = JSON.stringify({
     dev: "node sync-service.js"
   },
   dependencies: {
-    axios: "^0.27.2",
-    dotenv: "^8.6.0",
-    mssql: "^6.3.2",
-    "node-windows": "^0.1.14"
+    axios: "0.27.2",
+    dotenv: "8.6.0",
+    mssql: "6.3.2"
   }
 }, null, 2);
 
 export const nodeEnvExample = `# Database Configuration
-DB_SERVER=164.52.195.176
-DB_NAME=EInvoicetest
+# In your SQL Server Management Studio, the instance is SERVER\\SQLEXPRESS and active database is acacianew
+DB_SERVER=localhost\\SQLEXPRESS
+DB_NAME=acacianew
 DB_USER=sa
 DB_PASSWORD=Mgenn@123
 
