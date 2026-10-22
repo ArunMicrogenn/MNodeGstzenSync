@@ -74,16 +74,28 @@ defined('BASEPATH') OR exit('No direct script access allowed');
 $active_group = 'default';
 $query_builder = TRUE;
 
+/*
+| ===================================================================
+| SQL SERVER 2000 CONFIGURATION (Windows Server 2003 R2 / Legacy MDAC)
+| ===================================================================
+| For SQL Server 2000, DO NOT use 'SQL Server Native Client 11.0'
+| (Native Client 11 is for SQL Server 2012+ and fails on SQL 2000).
+|
+| Use the built-in Windows MDAC driver: DRIVER={SQL Server}
+| or PHP's native 'mssql' driver (php_mssql.dll / ntwdblib.dll).
+*/
+
+// Primary: Built-in Windows ODBC Driver for SQL Server 2000
 $db['default'] = array(
 	'dsn'	=> '',
-	'hostname' => 'DRIVER={SQL Server Native Client 11.0};Server=164.52.195.176\\\\sqlexpress;Database=EInvoicenew;',
+	'hostname' => 'DRIVER={SQL Server};Server=164.52.195.176\\\\sqlexpress;Database=EInvoicenew;',
 	'username' => 'sa',
 	'password' => 'Mgenn@123',
 	'database' => 'EInvoicenew',
 	'dbdriver' => 'odbc',
 	'dbprefix' => '',
 	'pconnect' => FALSE,
-	'db_debug' => FALSE,
+	'db_debug' => TRUE,
 	'cache_on' => FALSE,
 	'cachedir' => '',
 	'char_set' => 'utf8',
@@ -95,6 +107,19 @@ $db['default'] = array(
 	'failover' => array(),
 	'save_queries' => TRUE
 );
+
+/*
+| Alternative for PHP 5.2 / 5.3 / 5.4 with native php_mssql.dll:
+| $db['default'] = array(
+| 	'hostname' => '164.52.195.176\\\\sqlexpress', // or 'localhost' or '127.0.0.1,1433'
+| 	'username' => 'sa',
+| 	'password' => 'Mgenn@123',
+| 	'database' => 'EInvoicenew',
+| 	'dbdriver' => 'mssql',
+| 	'pconnect' => FALSE,
+| 	'db_debug' => TRUE
+| );
+*/
 `;
 
 // CodeIgniter Sync Controller provided for GST Zen / E-Invoice Sync
@@ -305,23 +330,35 @@ class Sync extends CI_Controller {
 						// Sanitize bill number for safe Windows file naming
 						$safeBillNo = str_replace(array('/', '\\', ':', '*', '?', '"', '<', '>', '|'), '_', $row['billno']);
 
-						// Download and save Invoice PDF to D:\SignedQrCode\{ehotelcode}\{billno}.pdf
+						// Microgenn Production Paths
+						$microgennQrDir = 'D:/microgennbackup/microgenn/Exe/exe/Mail/Qrcode/';
+						$microgennHtmlDir = 'D:/microgennbackup/microgenn/Exe/exe/Mail/Html/';
+						if (!is_dir($microgennQrDir)) {
+							@mkdir($microgennQrDir, 0777, true);
+						}
+						if (!is_dir($microgennHtmlDir)) {
+							@mkdir($microgennHtmlDir, 0777, true);
+						}
+
+						// Download and save Invoice PDF to D:\SignedQrCode\{ehotelcode}\{billno}.pdf and D:\microgennbackup\microgenn\Exe\exe\Mail\Html\{billno}.pdf
 						if (!empty($result['InvoicePdfUrl'])) {
 							$pdfUrl = 'https://my.gstzen.in' . $result['InvoicePdfUrl'];
 							$pdfTarget = $baseStorageDir . $safeBillNo . '.pdf';
 							$pdfData = @file_get_contents($pdfUrl);
 							if ($pdfData !== false) {
 								@file_put_contents($pdfTarget, $pdfData);
+								@file_put_contents($microgennHtmlDir . $safeBillNo . '.pdf', $pdfData);
 							}
 						}
 
-						// Download and save Signed QR Code PNG to D:\SignedQrCode\{ehotelcode}\{billno}.png
+						// Download and save Signed QR Code PNG to D:\SignedQrCode\{ehotelcode}\{billno}.png and D:\microgennbackup\microgenn\Exe\exe\Mail\Qrcode\{billno}.png
 						if (!empty($result['SignedQrCodeImgUrl'])) {
 							$qrUrl = 'https://my.gstzen.in' . $result['SignedQrCodeImgUrl'];
 							$qrTarget = $baseStorageDir . $safeBillNo . '.png';
 							$qrData = @file_get_contents($qrUrl);
 							if ($qrData !== false) {
 								@file_put_contents($qrTarget, $qrData);
+								@file_put_contents($microgennQrDir . $safeBillNo . '.png', $qrData);
 							}
 						}
 					}
@@ -519,23 +556,35 @@ class Sync extends CI_Controller {
 						// Sanitize bill number for safe Windows file naming
 						$safeBillNo = str_replace(array('/', '\\', ':', '*', '?', '"', '<', '>', '|'), '_', $row['billno']);
 
-						// Download and save Credit Note PDF to D:\SignedQrCode\{ehotelcode}\{billno}.pdf
+						// Microgenn Production Paths
+						$microgennQrDir = 'D:/microgennbackup/microgenn/Exe/exe/Mail/Qrcode/';
+						$microgennHtmlDir = 'D:/microgennbackup/microgenn/Exe/exe/Mail/Html/';
+						if (!is_dir($microgennQrDir)) {
+							@mkdir($microgennQrDir, 0777, true);
+						}
+						if (!is_dir($microgennHtmlDir)) {
+							@mkdir($microgennHtmlDir, 0777, true);
+						}
+
+						// Download and save Credit Note PDF to D:\SignedQrCode\{ehotelcode}\{billno}.pdf and D:\microgennbackup\microgenn\Exe\exe\Mail\Html\{billno}.pdf
 						if (!empty($result['InvoicePdfUrl'])) {
 							$pdfUrl = 'https://my.gstzen.in' . $result['InvoicePdfUrl'];
 							$pdfTarget = $baseStorageDir . $safeBillNo . '.pdf';
 							$pdfData = @file_get_contents($pdfUrl);
 							if ($pdfData !== false) {
 								@file_put_contents($pdfTarget, $pdfData);
+								@file_put_contents($microgennHtmlDir . $safeBillNo . '.pdf', $pdfData);
 							}
 						}
 
-						// Download and save Credit Note QR Code PNG to D:\SignedQrCode\{ehotelcode}\{billno}.png
+						// Download and save Credit Note QR Code PNG to D:\SignedQrCode\{ehotelcode}\{billno}.png and D:\microgennbackup\microgenn\Exe\exe\Mail\Qrcode\{billno}.png
 						if (!empty($result['SignedQrCodeImgUrl'])) {
 							$qrUrl = 'https://my.gstzen.in' . $result['SignedQrCodeImgUrl'];
 							$qrTarget = $baseStorageDir . $safeBillNo . '.png';
 							$qrData = @file_get_contents($qrUrl);
 							if ($qrData !== false) {
 								@file_put_contents($qrTarget, $qrData);
+								@file_put_contents($microgennQrDir . $safeBillNo . '.png', $qrData);
 							}
 						}
 					}
