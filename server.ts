@@ -853,9 +853,13 @@ if "!SCRIPT_DIR:~-1!"=="\" set "SCRIPT_DIR=!SCRIPT_DIR:~0,-1!"
 "%SCRIPT_DIR%\\nssm.exe" stop "GstZenSyncService" >nul 2>&1
 "%SCRIPT_DIR%\\nssm.exe" remove "GstZenSyncService" confirm >nul 2>&1
 
+set "NODE_SKIP_PLATFORM_CHECK=1"
+setx NODE_SKIP_PLATFORM_CHECK 1 /M >nul 2>&1
+
 "%SCRIPT_DIR%\\nssm.exe" install "GstZenSyncService" "%NODE_EXE%"
 "%SCRIPT_DIR%\\nssm.exe" set "GstZenSyncService" AppParameters "sync-service.js"
 "%SCRIPT_DIR%\\nssm.exe" set "GstZenSyncService" AppDirectory "!SCRIPT_DIR!"
+"%SCRIPT_DIR%\\nssm.exe" set "GstZenSyncService" AppEnvironmentExtra NODE_SKIP_PLATFORM_CHECK=1
 "%SCRIPT_DIR%\\nssm.exe" set "GstZenSyncService" DisplayName "GST Zen E-Invoice Sync Service"
 "%SCRIPT_DIR%\\nssm.exe" set "GstZenSyncService" Description "GST Zen E-Invoice pure Node.js background synchronization service"
 "%SCRIPT_DIR%\\nssm.exe" set "GstZenSyncService" Start SERVICE_AUTO_START
@@ -896,13 +900,13 @@ pause
 
   const nodeFixError3Bat = `@echo off
 setlocal enabledelayedexpansion
-TITLE Fix NSSM Service Error Code 3 - Windows Server 2003
+TITLE Fix NSSM Service Error Code 3 & Error 1067 - Windows Server
 color 0A
 cd /d "%~dp0"
 
 echo ===============================================================================
-echo     GST ZEN NODE SERVICE - ERROR CODE 3 REPAIR UTILITY
-echo     Resolves: "service-specific error code 3" in Windows Server 2003 R2
+echo     GST ZEN NODE SERVICE - ERROR REPAIR UTILITY
+echo     Resolves: Error 3 & Error 1067 in Windows Server 2003 / 2012 R2
 echo ===============================================================================
 echo.
 
@@ -914,6 +918,9 @@ if %errorLevel% neq 0 (
     exit /b 1
 )
 
+set "NODE_SKIP_PLATFORM_CHECK=1"
+setx NODE_SKIP_PLATFORM_CHECK 1 /M >nul 2>&1
+
 set "SCRIPT_DIR=%~dp0"
 if "!SCRIPT_DIR:~-1!"=="\" set "SCRIPT_DIR=!SCRIPT_DIR:~0,-1!"
 
@@ -921,13 +928,19 @@ set "NSSM_EXE=!SCRIPT_DIR!\\nssm.exe"
 if not exist "!NSSM_EXE!" set "NSSM_EXE=nssm.exe"
 
 set "SERVICE_ID=GstZenSyncService"
+sc query "GstZenSyncService" >nul 2>&1
+if %errorLevel% neq 0 (
+    sc query "gstzeneinvoicesyncservice" >nul 2>&1
+    if !errorLevel! equ 0 set "SERVICE_ID=gstzeneinvoicesyncservice"
+)
 
 echo [STEP 1] Stopping '%SERVICE_ID%'...
 "!NSSM_EXE!" stop "%SERVICE_ID%" >nul 2>&1
 
-echo [STEP 2] Repairing AppDirectory (Clean path without trailing slash):
+echo [STEP 2] Repairing AppDirectory & Injecting NODE_SKIP_PLATFORM_CHECK=1:
 echo   Directory: !SCRIPT_DIR!
 "!NSSM_EXE!" set "%SERVICE_ID%" AppDirectory "!SCRIPT_DIR!"
+"!NSSM_EXE!" set "%SERVICE_ID%" AppEnvironmentExtra NODE_SKIP_PLATFORM_CHECK=1
 "!NSSM_EXE!" set "%SERVICE_ID%" AppStdout "!SCRIPT_DIR!\\service-output.log"
 "!NSSM_EXE!" set "%SERVICE_ID%" AppStderr "!SCRIPT_DIR!\\service-error.log"
 
@@ -943,6 +956,76 @@ if %errorLevel% neq 0 (
 pause
 `;
   archive.append(nodeFixError3Bat, { name: "fix-error-3.bat" });
+
+  const nodeFix2012R2Bat = `@echo off
+setlocal enabledelayedexpansion
+TITLE Fix Windows Server 2012 R2 Node.js Platform Check and Error 1067
+color 0A
+cd /d "%~dp0"
+
+echo ===============================================================================
+echo     WINDOWS SERVER 2012 R2 - NODE.JS AND NSSM AUTO-FIX (ERROR 1067)
+echo ===============================================================================
+echo.
+
+net session >nul 2>&1
+if %errorLevel% neq 0 (
+    color 0C
+    echo [ERROR] Administrative privileges are REQUIRED.
+    echo Please right-click 'fix-server-2012r2.bat' and select "Run as administrator".
+    pause
+    exit /b 1
+)
+
+echo [STEP 1] Setting System-Wide NODE_SKIP_PLATFORM_CHECK=1...
+set "NODE_SKIP_PLATFORM_CHECK=1"
+setx NODE_SKIP_PLATFORM_CHECK 1 /M >nul 2>&1
+echo   [OK] NODE_SKIP_PLATFORM_CHECK=1 applied to System Environment.
+
+echo.
+echo [STEP 2] Locating NSSM Executable...
+set "SCRIPT_DIR=%~dp0"
+if "!SCRIPT_DIR:~-1!"=="\" set "SCRIPT_DIR=!SCRIPT_DIR:~0,-1!"
+set "NSSM_EXE=!SCRIPT_DIR!\\nssm.exe"
+if not exist "!NSSM_EXE!" set "NSSM_EXE=nssm.exe"
+
+set "SERVICE_ID=GstZenSyncService"
+sc query "GstZenSyncService" >nul 2>&1
+if %errorLevel% neq 0 (
+    sc query "gstzeneinvoicesyncservice" >nul 2>&1
+    if !errorLevel! equ 0 set "SERVICE_ID=gstzeneinvoicesyncservice"
+)
+
+echo.
+echo [STEP 3] Stopping '%SERVICE_ID%'...
+"!NSSM_EXE!" stop "%SERVICE_ID%" >nul 2>&1
+
+echo.
+echo [STEP 4] Configuring Service Environment & Parameters:
+echo   - AppDirectory:           !SCRIPT_DIR!
+echo   - AppEnvironmentExtra:    NODE_SKIP_PLATFORM_CHECK=1
+"!NSSM_EXE!" set "%SERVICE_ID%" AppDirectory "!SCRIPT_DIR!"
+"!NSSM_EXE!" set "%SERVICE_ID%" AppEnvironmentExtra NODE_SKIP_PLATFORM_CHECK=1
+"!NSSM_EXE!" set "%SERVICE_ID%" AppStdout "!SCRIPT_DIR!\\service-output.log"
+"!NSSM_EXE!" set "%SERVICE_ID%" AppStderr "!SCRIPT_DIR!\\service-error.log"
+
+echo.
+echo [STEP 5] Starting '%SERVICE_ID%'...
+"!NSSM_EXE!" start "%SERVICE_ID%"
+if %errorLevel% neq 0 (
+    color 0C
+    echo [WARNING] NSSM start returned code %errorLevel%. Attempting sc start...
+    sc start "%SERVICE_ID%"
+)
+
+echo.
+echo ===============================================================================
+echo [SUCCESS] Windows Server 2012 R2 Fix Applied!
+echo Refresh services.msc to verify that '%SERVICE_ID%' is RUNNING.
+echo ===============================================================================
+pause
+`;
+  archive.append(nodeFix2012R2Bat, { name: "fix-server-2012r2.bat" });
 
   const nodeDiagnoseBat = `@echo off
 setlocal enabledelayedexpansion
