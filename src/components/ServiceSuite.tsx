@@ -1,16 +1,19 @@
 import { useState, useEffect, useRef, type ChangeEvent } from 'react';
 import { Settings, Activity, HardDrive, Terminal, Bot, Moon, Upload, Play, Search, Server, FileCode, MessageSquare, ShieldCheck, FileJson, Zap, Trash2, Database, Copy, DownloadCloud, Filter, RefreshCw, Square, RotateCcw, Loader2, CheckCircle2, AlertCircle, Clock, Cpu, Wrench, AlertTriangle, BookOpen, ChevronRight, CheckCircle } from 'lucide-react';
 import { databasePhpContent, syncPhpContent } from '../data/gstZenFiles';
-import { nodeSyncJsCode, nodePackageJson, nodeEnvExample } from '../data/nodeSyncScript';
+import { nodeSyncJsCode, nodePackageJson, nodeEnvExample, nodeSqlAuthFixScript, nodeZeroDepScript } from '../data/nodeSyncScript';
 
 export function ServiceSuite() {
-  const [activeTab, setActiveTab] = useState('node-sync');
+  const [activeTab, setActiveTab] = useState('sql-auth-fix');
   const [activeFileTab, setActiveFileTab] = useState('sync');
-  const [nodeFileTab, setNodeFileTab] = useState<'js' | 'package' | 'env'>('js');
+  const [nodeFileTab, setNodeFileTab] = useState<'zero-js' | 'js' | 'package' | 'env'>('zero-js');
   const [isNodeDownloading, setIsNodeDownloading] = useState(false);
   const [isNodeTesting, setIsNodeTesting] = useState(false);
   const [nodeTestOutput, setNodeTestOutput] = useState('Click "Test Node.js Sync" to execute a live simulation of the XAMPP-free Node.js daemon.');
   const [nodeCopied, setNodeCopied] = useState(false);
+  const [sqlAuthCopied, setSqlAuthCopied] = useState(false);
+  const [restartCmdCopied, setRestartCmdCopied] = useState(false);
+  const [envCopied, setEnvCopied] = useState(false);
   const [diagnoseCopied, setDiagnoseCopied] = useState(false);
   const [phpPath, setPhpPath] = useState('C:\\php\\php.exe');
   const [ciPath, setCiPath] = useState('C:\\xampp\\htdocs\\gstzen\\index.php');
@@ -273,6 +276,7 @@ export function ServiceSuite() {
   };
 
   const getNodeActiveContent = () => {
+    if (nodeFileTab === 'zero-js') return nodeZeroDepScript;
     if (nodeFileTab === 'js') return nodeSyncJsCode;
     if (nodeFileTab === 'package') return nodePackageJson;
     return nodeEnvExample;
@@ -285,7 +289,8 @@ export function ServiceSuite() {
   };
 
   const tabs = [
-    { id: 'node-sync', label: 'Node.js Sync (XAMPP-Free)', icon: Zap },
+    { id: 'sql-auth-fix', label: 'Fix SQL Auth & sa Login', icon: Database },
+    { id: 'node-sync', label: 'Node.js Sync (Windows Server)', icon: Zap },
     { id: 'nssm-fixer', label: 'Fix NSSM Service Start', icon: Wrench },
     { id: 'deployment', label: 'Deployment & Files', icon: HardDrive },
     { id: 'config', label: 'Config & Generator', icon: Settings },
@@ -738,6 +743,18 @@ pause`;
     window.URL.revokeObjectURL(url);
   };
 
+  const handleDownloadSqlScript = () => {
+    const blob = new Blob([nodeSqlAuthFixScript], { type: 'text/plain;charset=utf-8' });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'fix-sql-auth.sql';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    window.URL.revokeObjectURL(url);
+  };
+
   const generateUninstall = () => `@echo off
 TITLE Uninstall ${serviceName}
 color 0C
@@ -1009,6 +1026,254 @@ function Get-ServiceDaemonStatus {
 
       {/* Main Content */}
       <main className="flex-1 max-w-5xl mx-auto w-full py-10 px-6">
+        {activeTab === 'sql-auth-fix' && (
+          <div className="animate-in fade-in slide-in-from-bottom-2 duration-300 space-y-8">
+            {/* Hero Banner */}
+            <div className="bg-gradient-to-r from-blue-900 via-indigo-950 to-slate-950 text-white p-7 rounded-2xl shadow-lg border border-blue-800/40">
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-5">
+                <div className="flex items-start gap-4">
+                  <div className="w-12 h-12 bg-blue-500/20 border border-blue-500/30 rounded-xl flex items-center justify-center text-blue-400 shrink-0">
+                    <Database className="w-6 h-6 text-blue-400" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs uppercase font-mono tracking-wider text-blue-300 font-bold bg-blue-950/80 px-2 py-0.5 rounded border border-blue-700/50">
+                        SQL Server 2014 Express &bull; SERVER\\SQLEXPRESS
+                      </span>
+                      <span className="text-xs font-mono text-slate-300">Windows Server 2012 R2</span>
+                    </div>
+                    <h2 className="text-2xl font-bold tracking-tight text-white mt-1">
+                      Fix SQL Server Authentication &amp; &apos;sa&apos; Login Failed
+                    </h2>
+                    <p className="text-slate-300 text-sm mt-1 max-w-2xl leading-relaxed">
+                      Instant resolution for <strong>&quot;Login failed for user &apos;sa&apos;&quot;</strong> and database name discrepancy between your console (<code>acacianew</code>) and SSMS (<code>acaciapark</code>).
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2.5">
+                  <button
+                    onClick={handleDownloadSqlScript}
+                    className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-xs font-semibold shadow-xs transition-colors"
+                  >
+                    <DownloadCloud className="w-4 h-4" />
+                    Download fix-sql-auth.sql
+                  </button>
+                  <button
+                    onClick={() => {
+                      navigator.clipboard.writeText(nodeSqlAuthFixScript);
+                      setSqlAuthCopied(true);
+                      setTimeout(() => setSqlAuthCopied(false), 2000);
+                    }}
+                    className="flex items-center gap-2 px-4 py-2 bg-white/10 hover:bg-white/20 text-white rounded-lg text-xs font-semibold backdrop-blur-xs transition-colors border border-white/10"
+                  >
+                    <Copy className="w-4 h-4" />
+                    {sqlAuthCopied ? 'Copied T-SQL Script!' : 'Copy T-SQL Script'}
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Error Diagnosis Cards */}
+            <div>
+              <h3 className="text-base font-bold text-slate-900 flex items-center gap-2 mb-3">
+                <AlertTriangle className="w-5 h-5 text-amber-500" />
+                Root Causes Identified from Your Server Screen
+              </h3>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {/* Cause 1: Database name mismatch */}
+                <div className="bg-white border-2 border-rose-200 rounded-xl p-5 shadow-xs">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-[11px] font-bold text-rose-700 bg-rose-50 px-2.5 py-0.5 rounded-full border border-rose-200 uppercase tracking-wider">
+                      Critical Mismatch #1
+                    </span>
+                    <span className="text-xs font-mono text-slate-500">Database Name</span>
+                  </div>
+                  <h4 className="font-bold text-slate-900 text-sm mb-1.5">
+                    Console is connecting to &apos;acacianew&apos;, but SSMS is &apos;acaciapark&apos;
+                  </h4>
+                  <p className="text-xs text-slate-600 leading-relaxed">
+                    Your Command Prompt output displays: <code className="bg-slate-100 text-rose-700 font-mono px-1 rounded">Database: acacianew</code>. However, your SQL Server Management Studio status bar shows <code className="bg-slate-100 text-emerald-700 font-mono px-1 rounded">SERVER\SQLEXPRESS | acaciapark | 954 rows</code>. SQL Server rejects logins if the requested database doesn&apos;t exist.
+                  </p>
+                  <div className="mt-3 text-xs bg-slate-50 p-2.5 rounded border border-slate-200">
+                    <span className="font-semibold text-slate-800">Fix in C:\gstzen-sync\.env:</span>
+                    <div className="font-mono text-emerald-700 font-bold mt-1">DB_NAME=acaciapark</div>
+                  </div>
+                </div>
+
+                {/* Cause 2: Mixed mode / sa password syntax error in SSMS */}
+                <div className="bg-white border-2 border-amber-200 rounded-xl p-5 shadow-xs">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-[11px] font-bold text-amber-800 bg-amber-50 px-2.5 py-0.5 rounded-full border border-amber-200 uppercase tracking-wider">
+                      Authentication Mode &amp; Password
+                    </span>
+                    <span className="text-xs font-mono text-slate-500">SQL Server Auth</span>
+                  </div>
+                  <h4 className="font-bold text-slate-900 text-sm mb-1.5">
+                    &apos;sa&apos; Password was not changed due to syntax error in SSMS
+                  </h4>
+                  <p className="text-xs text-slate-600 leading-relaxed">
+                    In your SSMS query window, typing was broken (<code className="bg-slate-100 text-amber-700 font-mono px-1 rounded">OLICY = ON; again</code>). Windows password complexity policies and disabled SQL Server Authentication Mode prevent the login from functioning until properly enabled and restarted.
+                  </p>
+                  <div className="mt-3 text-xs bg-slate-50 p-2.5 rounded border border-slate-200">
+                    <span className="font-semibold text-slate-800">Solution:</span>
+                    <div className="text-slate-600 mt-1">Run our complete 1-Click T-SQL script in SSMS, then restart the SQL service.</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* 4 Steps Resolution Guide */}
+            <div className="space-y-6">
+              <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                <CheckCircle2 className="w-5 h-5 text-emerald-600" />
+                Step-by-Step Resolution (Complete in 60 Seconds)
+              </h3>
+
+              {/* Step 1 */}
+              <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-xs">
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center gap-3">
+                    <div className="w-7 h-7 bg-blue-100 text-blue-700 font-bold rounded-full flex items-center justify-center text-xs">
+                      1
+                    </div>
+                    <div>
+                      <h4 className="font-bold text-slate-900 text-sm">
+                        Execute T-SQL Script in SQL Server Management Studio (SSMS)
+                      </h4>
+                      <p className="text-xs text-slate-500">
+                        In SSMS, open a New Query window, paste this script, and click <strong>Execute (F5)</strong>.
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => {
+                      navigator.clipboard.writeText(nodeSqlAuthFixScript);
+                      setSqlAuthCopied(true);
+                      setTimeout(() => setSqlAuthCopied(false), 2000);
+                    }}
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-50 text-blue-700 hover:bg-blue-100 rounded-lg text-xs font-semibold transition-colors border border-blue-200"
+                  >
+                    <Copy className="w-3.5 h-3.5" />
+                    {sqlAuthCopied ? 'Copied!' : 'Copy Script'}
+                  </button>
+                </div>
+
+                <div className="bg-[#0a0f1c] text-slate-200 p-4 rounded-lg font-mono text-xs overflow-x-auto max-h-56 leading-relaxed border border-slate-800">
+                  <pre>{nodeSqlAuthFixScript}</pre>
+                </div>
+              </div>
+
+              {/* Step 2 */}
+              <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-xs">
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center gap-3">
+                    <div className="w-7 h-7 bg-blue-100 text-blue-700 font-bold rounded-full flex items-center justify-center text-xs">
+                      2
+                    </div>
+                    <div>
+                      <h4 className="font-bold text-slate-900 text-sm">
+                        Restart the SQL Server Express Service
+                      </h4>
+                      <p className="text-xs text-slate-500">
+                        SQL Server <strong>MUST</strong> be restarted after enabling SQL Server Authentication (Mixed Mode).
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => {
+                      navigator.clipboard.writeText('net stop MSSQL$SQLEXPRESS && net start MSSQL$SQLEXPRESS');
+                      setRestartCmdCopied(true);
+                      setTimeout(() => setRestartCmdCopied(false), 2000);
+                    }}
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 text-slate-700 hover:bg-slate-200 rounded-lg text-xs font-semibold transition-colors border border-slate-200"
+                  >
+                    <Copy className="w-3.5 h-3.5" />
+                    {restartCmdCopied ? 'Copied!' : 'Copy Command'}
+                  </button>
+                </div>
+
+                <div className="bg-[#0a0f1c] text-emerald-400 p-3 rounded-lg font-mono text-xs flex items-center justify-between">
+                  <code>net stop MSSQL$SQLEXPRESS &amp;&amp; net start MSSQL$SQLEXPRESS</code>
+                </div>
+                <p className="text-[11px] text-slate-500 mt-2">
+                  (Or in SSMS Object Explorer: right-click <code className="bg-slate-100 px-1 rounded text-slate-800">SERVER\SQLEXPRESS</code> and click <strong>Restart</strong>).
+                </p>
+              </div>
+
+              {/* Step 3 */}
+              <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-xs">
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center gap-3">
+                    <div className="w-7 h-7 bg-blue-100 text-blue-700 font-bold rounded-full flex items-center justify-center text-xs">
+                      3
+                    </div>
+                    <div>
+                      <h4 className="font-bold text-slate-900 text-sm">
+                        Update C:\gstzen-sync\.env
+                      </h4>
+                      <p className="text-xs text-slate-500">
+                        Save this file as <code className="bg-slate-100 px-1 rounded text-slate-800">C:\gstzen-sync\.env</code> so the daemon connects to <strong>acaciapark</strong>.
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => {
+                      navigator.clipboard.writeText(nodeEnvExample);
+                      setEnvCopied(true);
+                      setTimeout(() => setEnvCopied(false), 2000);
+                    }}
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-50 text-blue-700 hover:bg-blue-100 rounded-lg text-xs font-semibold transition-colors border border-blue-200"
+                  >
+                    <Copy className="w-3.5 h-3.5" />
+                    {envCopied ? 'Copied .env!' : 'Copy .env'}
+                  </button>
+                </div>
+
+                <div className="bg-[#0a0f1c] text-emerald-300 p-4 rounded-lg font-mono text-xs leading-relaxed border border-slate-800">
+                  <pre>{nodeEnvExample}</pre>
+                </div>
+              </div>
+
+              {/* Step 4 */}
+              <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-xs">
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center gap-3">
+                    <div className="w-7 h-7 bg-blue-100 text-blue-700 font-bold rounded-full flex items-center justify-center text-xs">
+                      4
+                    </div>
+                    <div>
+                      <h4 className="font-bold text-slate-900 text-sm">
+                        Run the Node.js Daemon in Command Prompt
+                      </h4>
+                      <p className="text-xs text-slate-500">
+                        In your Command Prompt window, execute the sync service:
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="bg-[#0a0f1c] text-emerald-400 p-3 rounded-lg font-mono text-xs select-all">
+                  <code>cd \gstzen-sync &amp;&amp; set NODE_SKIP_PLATFORM_CHECK=1 &amp;&amp; node sync-service.js</code>
+                </div>
+
+                <div className="mt-4 flex items-center justify-between pt-3 border-t border-slate-100">
+                  <span className="text-xs text-slate-500">
+                    Need the full updated <code className="font-mono text-slate-800">sync-service.js</code> with the GST Zen Place of Supply tax fix?
+                  </span>
+                  <button
+                    onClick={() => setActiveTab('node-sync')}
+                    className="inline-flex items-center gap-1.5 text-xs font-semibold text-blue-600 hover:text-blue-700"
+                  >
+                    View &amp; Copy sync-service.js <ChevronRight className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
         {activeTab === 'node-sync' && (
           <div className="animate-in fade-in slide-in-from-bottom-2 duration-300">
             {/* Hero */}
@@ -1173,13 +1438,22 @@ function Get-ServiceDaemonStatus {
             <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden flex flex-col mb-8">
               <div className="flex items-center gap-1 border-b border-slate-200 p-2 overflow-x-auto bg-slate-50/50">
                 <button
+                  onClick={() => setNodeFileTab('zero-js')}
+                  className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm transition-all whitespace-nowrap ${
+                    nodeFileTab === 'zero-js' ? 'bg-[#0a0f1c] text-white font-medium shadow-sm' : 'text-slate-600 hover:bg-slate-100'
+                  }`}
+                >
+                  <Zap className="w-4 h-4 text-amber-400" />
+                  sync-osql-zerodep.js (Win 2003 / nahar)
+                </button>
+                <button
                   onClick={() => setNodeFileTab('js')}
                   className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm transition-all whitespace-nowrap ${
                     nodeFileTab === 'js' ? 'bg-[#0a0f1c] text-white font-medium shadow-sm' : 'text-slate-600 hover:bg-slate-100'
                   }`}
                 >
                   <FileCode className="w-4 h-4 text-emerald-400" />
-                  sync-service.js
+                  sync-service.js (mssql package)
                 </button>
                 <button
                   onClick={() => setNodeFileTab('package')}

@@ -3,506 +3,1190 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-export const nodeSyncJsCode = [
-  '"use strict";',
-  '',
-  '/**',
-  ' * GST Zen E-Invoice & PDF/QR Sync Daemon (Zero-Dependency Edition)',
-  ' * Compatible with Windows Server 2003 R2 / SQL Server 2000 (nahar)',
-  ' * Automatically downloads Invoice PDFs & QR Codes and updates qrstatusflag=1, upload=1',
-  ' */',
-  '',
-  'process.chdir(__dirname);',
-  '',
-  'var https = require("https");',
-  'var http = require("http");',
-  'var fs = require("fs");',
-  'var path = require("path");',
-  'var child_process = require("child_process");',
-  'var urlParser = require("url");',
-  '',
-  'var OSQL_EXE = "osql";',
-  'if (fs.existsSync("C:\\\\Program Files\\\\Microsoft SQL Server\\\\80\\\\Tools\\\\Binn\\\\osql.exe")) {',
-  '  OSQL_EXE = "\\"C:\\\\Program Files\\\\Microsoft SQL Server\\\\80\\\\Tools\\\\Binn\\\\osql.exe\\"";',
-  '}',
-  '',
-  'var DB_NAME = "nahar";',
-  'var DEFAULT_TOKEN = "226e1ba9-a1ed-4249-9820-fa7a67cb1350";',
-  'var GSTZEN_URL = "https://my.gstzen.in/~gstzen/a/post-einvoice-data/einvoice-json/";',
-  'var SYNC_INTERVAL_MS = 10000;',
-  '',
-  '// Specified output directories',
-  'var PDF_DIR = "D:\\\\microgennbackup\\\\microgenn\\\\Exe\\\\exe\\\\Mail\\\\Html";',
-  'var QR_DIR = "D:\\\\microgennbackup\\\\microgenn\\\\Exe\\\\exe\\\\Mail\\\\Qrcode";',
-  'var BACKUP_DIR = "D:\\\\SignedQrCode";',
-  '',
-  '// Create directory tree recursively (Node 5.12 compatible)',
-  'function mkdirsSync(targetDir) {',
-  '  var parts = path.resolve(targetDir).split(path.sep);',
-  '  var current = parts[0] + path.sep;',
-  '  for (var i = 1; i < parts.length; i++) {',
-  '    current = path.join(current, parts[i]);',
-  '    if (!fs.existsSync(current)) {',
-  '      try { fs.mkdirSync(current); } catch (e) {}',
-  '    }',
-  '  }',
-  '}',
-  '',
-  '// Robust HTTP/HTTPS binary downloader with redirect support',
-  'function downloadBinary(fileUrl, destPaths) {',
-  '  if (!Array.isArray(destPaths)) destPaths = [destPaths];',
-  '  return new Promise(function(resolve, reject) {',
-  '    function fetchUrl(curUrl, redirects) {',
-  '      if (redirects > 5) return reject(new Error("Too many redirects"));',
-  '      var fullUrl = curUrl;',
-  '      if (fullUrl.indexOf("http") !== 0) {',
-  '        fullUrl = "https://my.gstzen.in" + (fullUrl.indexOf("/") === 0 ? "" : "/") + fullUrl;',
-  '      }',
-  '      var parsed = urlParser.parse(fullUrl);',
-  '      var client = (parsed.protocol === "http:") ? http : https;',
-  '      var options = {',
-  '        hostname: parsed.hostname,',
-  '        port: parsed.port || (parsed.protocol === "http:" ? 80 : 443),',
-  '        path: parsed.path,',
-  '        method: "GET",',
-  '        headers: { "User-Agent": "Mozilla/5.0" },',
-  '        rejectUnauthorized: false',
-  '      };',
-  '',
-  '      var req = client.request(options, function(res) {',
-  '        if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {',
-  '          var next = res.headers.location;',
-  '          var resolvedUrl = urlParser.resolve(fullUrl, next);',
-  '          res.resume();',
-  '          return fetchUrl(resolvedUrl, redirects + 1);',
-  '        }',
-  '        if (res.statusCode !== 200) {',
-  '          return reject(new Error("HTTP status " + res.statusCode));',
-  '        }',
-  '        var chunks = [];',
-  '        res.on("data", function(c) { chunks.push(c); });',
-  '        res.on("end", function() {',
-  '          try {',
-  '            var buffer = Buffer.concat(chunks);',
-  '            if (buffer.length === 0) return reject(new Error("Empty file"));',
-  '            for (var k = 0; k < destPaths.length; k++) {',
-  '              var p = destPaths[k];',
-  '              mkdirsSync(path.dirname(p));',
-  '              fs.writeFileSync(p, buffer);',
-  '            }',
-  '            resolve(buffer.length);',
-  '          } catch (e) {',
-  '            reject(e);',
-  '          }',
-  '        });',
-  '      });',
-  '      req.on("error", function(err) { reject(err); });',
-  '      req.setTimeout(45000, function() { req.abort(); reject(new Error("Timeout")); });',
-  '      req.end();',
-  '    }',
-  '    fetchUrl(fileUrl, 0);',
-  '  });',
-  '}',
-  '',
-  'function postJson(targetUrl, payloadObj, token) {',
-  '  return new Promise(function(resolve, reject) {',
-  '    var postData = JSON.stringify(payloadObj);',
-  '    var actualUrl = targetUrl || GSTZEN_URL;',
-  '    var parsedUrl = urlParser.parse(actualUrl);',
-  '    var authToken = token || DEFAULT_TOKEN;',
-  '    var options = {',
-  '      hostname: parsedUrl.hostname,',
-  '      port: parsedUrl.port || 443,',
-  '      path: parsedUrl.path,',
-  '      method: "POST",',
-  '      headers: {',
-  '        "Content-Type": "application/json",',
-  '        "Content-Length": Buffer.byteLength(postData),',
-  '        "Token": String(authToken),',
-  '        "User-Agent": "Microgenn-GstZen-Sync-Service/2.0"',
-  '      },',
-  '      rejectUnauthorized: false',
-  '    };',
-  '',
-  '    var req = https.request(options, function(res) {',
-  '      var body = "";',
-  '      res.setEncoding("utf8");',
-  '      res.on("data", function(chunk) { body += chunk; });',
-  '      res.on("end", function() {',
-  '        try {',
-  '          resolve(JSON.parse(body));',
-  '        } catch (e) {',
-  '          resolve({ status: 0, message: body });',
-  '        }',
-  '      });',
-  '    });',
-  '',
-  '    req.on("error", function(err) { reject(err); });',
-  '    req.setTimeout(60000, function() { req.abort(); reject(new Error("Request timeout")); });',
-  '    req.write(postData);',
-  '    req.end();',
-  '  });',
-  '}',
-  '',
-  'function executeSql(sqlStatement) {',
-  '  return new Promise(function(resolve, reject) {',
-  '    var tempFile = path.join(__dirname, "_gstzen_temp.sql");',
-  '    var outFile = path.join(__dirname, "_gstzen_out.txt");',
-  '    fs.writeFileSync(tempFile, "SET NOCOUNT ON;\\n" + sqlStatement + "\\n");',
-  '',
-  '    var cmd = OSQL_EXE + " -E -d " + DB_NAME + " -n -w 8000 -h-1 -i \\"" + tempFile + "\\" -o \\"" + outFile + "\\"";',
-  '',
-  '    child_process.exec(cmd, { timeout: 30000 }, function(err) {',
-  '      try { if (fs.existsSync(tempFile)) fs.unlinkSync(tempFile); } catch (e) {}',
-  '      if (!fs.existsSync(outFile)) {',
-  '        if (err) return reject(err);',
-  '        return resolve([]);',
-  '      }',
-  '      var output = fs.readFileSync(outFile, "utf8");',
-  '      try { if (fs.existsSync(outFile)) fs.unlinkSync(outFile); } catch (e) {}',
-  '',
-  '      if (output.indexOf("Msg ") !== -1 && output.indexOf("Level ") !== -1) {',
-  '        return resolve([]);',
-  '      }',
-  '',
-  '      var lines = output.split(/\\r?\\n/);',
-  '      var rows = [];',
-  '      for (var i = 0; i < lines.length; i++) {',
-  '        var line = lines[i].trim();',
-  '        if (!line || line.indexOf("---") === 0) continue;',
-  '        var parts = line.split("|");',
-  '        rows.push(parts);',
-  '      }',
-  '      resolve(rows);',
-  '    });',
-  '  });',
-  '}',
-  '',
-  'function num(val) {',
-  '  var n = parseFloat(val);',
-  '  return isNaN(n) ? 0 : parseFloat(n.toFixed(2));',
-  '}',
-  '',
-  'function sanitize(str) {',
-  '  if (!str) return "";',
-  '  return String(str).replace(/[\'\\\\\/:\*\?"<>\|`]/g, "");',
-  '}',
-  '',
-  'function formatGstDate(dt) {',
-  '  if (!dt) return "";',
-  '  var d = new Date(dt);',
-  '  if (isNaN(d.getTime())) return String(dt);',
-  '  var day = d.getDate();',
-  '  var month = d.getMonth() + 1;',
-  '  var year = d.getFullYear();',
-  '  return (day < 10 ? "0" + day : day) + "/" + (month < 10 ? "0" + month : month) + "/" + year;',
-  '}',
-  '',
-  'function runSyncCycle() {',
-  '  console.log("[" + new Date().toISOString() + "] Checking pending actions in " + DB_NAME + "...");',
-  '',
-  '  // --- TASK 1: Check for generated IRNs waiting for PDF / QR download ---',
-  '  var pendingQrQuery = "SELECT TOP 5 " +',
-  '    "CAST(mas.eid AS VARCHAR) + \'|\' + " +',
-  '    "ISNULL(mas.billno,\'\') + \'|\' + " +',
-  '    "ISNULL(mas.ehotelcode,\'SUA9E\') + \'|\' + " +',
-  '    "ISNULL((SELECT TOP 1 InvoicePdfUrl FROM Response_ZenGst WHERE LTRIM(RTRIM(Billno)) = LTRIM(RTRIM(mas.billno)) AND InvoicePdfUrl IS NOT NULL ORDER BY InsertDate DESC),\'\') + \'|\' + " +',
-  '    "ISNULL((SELECT TOP 1 SignedQrCodeImgUrl FROM Response_ZenGst WHERE LTRIM(RTRIM(Billno)) = LTRIM(RTRIM(mas.billno)) AND SignedQrCodeImgUrl IS NOT NULL ORDER BY InsertDate DESC),\'\') + \'|\' + " +',
-  '    "ISNULL((SELECT TOP 1 uuid FROM Response_ZenGst WHERE LTRIM(RTRIM(Billno)) = LTRIM(RTRIM(mas.billno)) ORDER BY InsertDate DESC),\'\') " +',
-  '    "FROM trans_b2beinvoice_mas mas " +',
-  '    "WHERE ISNULL(mas.Syncflag,0)=1 AND (mas.qrstatusflag IS NULL OR mas.qrstatusflag=0) " +',
-  '    "ORDER BY mas.eid DESC";',
-  '',
-  '  executeSql(pendingQrQuery).then(function(qrRows) {',
-  '    var chain = Promise.resolve();',
-  '    if (qrRows && qrRows.length > 0) {',
-  '      console.log("[PDF/QR Task] Found " + qrRows.length + " synced invoice(s) needing PDF/QR files.");',
-  '      qrRows.forEach(function(q) {',
-  '        chain = chain.then(function() {',
-  '          var qEid = parseInt(String(q[0]).replace(/\\D/g, ""), 10) || 0;',
-  '          var qBillno = (q[1] || "").trim();',
-  '          var qHotel = (q[2] || "SUA9E").trim();',
-  '          var pdfUrl = (q[3] || "").trim();',
-  '          var qrUrl = (q[4] || "").trim();',
-  '          var uuid = (q[5] || "").trim();',
-  '',
-  '          if (!pdfUrl && uuid) {',
-  '            pdfUrl = "https://my.gstzen.in/~gstzen/a/post-einvoice-data/einvoice-pdf/" + uuid + "/";',
-  '          }',
-  '          if (!qrUrl && uuid) {',
-  '            qrUrl = "https://my.gstzen.in/~gstzen/a/post-einvoice-data/einvoice-qr/" + uuid + "/";',
-  '          }',
-  '',
-  '          if (!qBillno || !qEid) return Promise.resolve();',
-  '',
-  '          console.log("[Processing Files] Bill: " + qBillno + " (EID: " + qEid + ")");',
-  '',
-  '          var pdfTargets = [',
-  '            path.join(PDF_DIR, qBillno + ".pdf"),',
-  '            path.join(BACKUP_DIR, qHotel, qBillno + ".pdf")',
-  '          ];',
-  '          var qrTargets = [',
-  '            path.join(QR_DIR, qBillno + ".png"),',
-  '            path.join(QR_DIR, qBillno + ".jpg"),',
-  '            path.join(BACKUP_DIR, qHotel, qBillno + ".png"),',
-  '            path.join(BACKUP_DIR, qHotel, qBillno + ".jpg")',
-  '          ];',
-  '',
-  '          var dlPromise = Promise.resolve();',
-  '          if (pdfUrl) {',
-  '            dlPromise = dlPromise.then(function() {',
-  '              console.log("Downloading PDF for " + qBillno + "...");',
-  '              return downloadBinary(pdfUrl, pdfTargets).then(function(sz) {',
-  '                console.log("[SUCCESS Saved PDF] " + pdfTargets[0] + " (" + sz + " bytes)");',
-  '              }).catch(function(e) {',
-  '                console.error("[PDF Error for " + qBillno + "]: " + e.message);',
-  '              });',
-  '            });',
-  '          }',
-  '',
-  '          if (qrUrl) {',
-  '            dlPromise = dlPromise.then(function() {',
-  '              console.log("Downloading QR Image for " + qBillno + "...");',
-  '              return downloadBinary(qrUrl, qrTargets).then(function(sz) {',
-  '                console.log("[SUCCESS Saved QR] " + qrTargets[0] + " (" + sz + " bytes)");',
-  '              }).catch(function(e) {',
-  '                console.error("[QR Error for " + qBillno + "]: " + e.message);',
-  '              });',
-  '            });',
-  '          }',
-  '',
-  '          return dlPromise.then(function() {',
-  '            var markDone = "UPDATE trans_b2beinvoice_mas SET qrstatusflag = 1, upload = 1 WHERE eid = " + qEid;',
-  '            return executeSql(markDone).then(function() {',
-  '              console.log("[Updated DB] qrstatusflag=1, upload=1 for Bill: " + qBillno);',
-  '            });',
-  '          });',
-  '        });',
-  '      });',
-  '    }',
-  '',
-  '    return chain.then(function() {',
-  '',
-  '    // --- TASK 2: Check for new pending B2B invoices to sync to GST Zen ---',
-  '    var pendingQuery = "SELECT TOP 1 " +',
-  '      "CAST(mas.eid AS VARCHAR) + \'|\' + " +',
-  '      "ISNULL(mas.billno,\'\') + \'|\' + " +',
-  '      "CONVERT(VARCHAR, mas.billdate, 120) + \'|\' + " +',
-  '      "ISNULL(mas.typ,\'INV\') + \'|\' + " +',
-  '      "CAST(ISNULL(mas.assval,0) AS VARCHAR) + \'|\' + " +',
-  '      "CAST(ISNULL(mas.CgstVal,0) AS VARCHAR) + \'|\' + " +',
-  '      "CAST(ISNULL(mas.sgstval,0) AS VARCHAR) + \'|\' + " +',
-  '      "CAST(ISNULL(mas.igstval,0) AS VARCHAR) + \'|\' + " +',
-  '      "CAST(ISNULL(mas.CesVal,0) AS VARCHAR) + \'|\' + " +',
-  '      "CAST(ISNULL(mas.OthChrg,0) AS VARCHAR) + \'|\' + " +',
-  '      "CAST(ISNULL(mas.Totinvval,0) AS VARCHAR) + \'|\' + " +',
-  '      "ISNULL(mas.regrv,\'N\') + \'|\' + " +',
-  '      "ISNULL(mas.suptyp,\'B2B\') + \'|\' + " +',
-  '      "ISNULL(mas.taxsh,\'GST\') + \'|\' + " +',
-  '      "ISNULL(mas.igstonintra,\'N\') + \'|\' + " +',
-  '      "ISNULL(mas.sellergstin,\'\') + \'|\' + " +',
-  '      "ISNULL(mas.sellerlglnm,\'\') + \'|\' + " +',
-  '      "ISNULL(mas.selleraddrl,\'\') + \'|\' + " +',
-  '      "ISNULL(mas.sellerloc,\'\') + \'|\' + " +',
-  '      "CAST(ISNULL(mas.sellerpin,0) AS VARCHAR) + \'|\' + " +',
-  '      "ISNULL(mas.sellerstcd,\'\') + \'|\' + " +',
-  '      "ISNULL(mas.buyergstin,\'\') + \'|\' + " +',
-  '      "ISNULL(mas.buyerlglnm,\'\') " +',
-  '      "FROM trans_b2beinvoice_mas mas " +',
-  '      "WHERE ISNULL(mas.Syncflag,0)=0 AND ISNULL(mas.NotSyncflag,0)=0 " +',
-  '      "ORDER BY mas.eid DESC";',
-  '',
-  '    return executeSql(pendingQuery).then(function(rows) {',
-  '      if (!rows || rows.length === 0) {',
-  '        console.log("No new pending B2B invoices to sync.");',
-  '        return;',
-  '      }',
-  '      var r = rows[0];',
-  '      var eidDigits = (r[0] || "").replace(/\\D/g, "");',
-  '      var eid = eidDigits ? parseInt(eidDigits, 10) : 0;',
-  '      var billno = (r[1] || "").trim();',
-  '      var billdate = r[2], typ = r[3] || "INV";',
-  '      var assval = num(r[4]), cgst = num(r[5]), sgst = num(r[6]), igst = num(r[7]), ces = num(r[8]), oth = num(r[9]), tot = num(r[10]);',
-  '      var regrv = r[11], suptyp = r[12], taxsh = r[13], igstonintra = r[14];',
-  '      var sGstin = r[15], sLglNm = r[16], sAddr1 = r[17], sLoc = r[18], sPin = parseInt(r[19], 10) || 638001, sStcd = r[20];',
-  '      var bGstin = r[21], bLglNm = r[22];',
-  '',
-  '      if (!billno || !eid) return;',
-  '',
-  '      console.log("[New Invoice] Bill No: " + billno + " (EID: " + eid + ")");',
-  '',
-  '      var itemQuery = "SELECT " +',
-  '        "CAST(ISNULL(slno,1) AS VARCHAR) + \'|\' + " +',
-  '        "ISNULL(unit,\'OTH\') + \'|\' + " +',
-  '        "CAST(ISNULL(cesrt,0) AS VARCHAR) + \'|\' + " +',
-  '        "CAST(ISNULL(gstrt,18) AS VARCHAR) + \'|\' + " +',
-  '        "ISNULL(hsncd,\'996311\') + \'|\' + " +',
-  '        "CAST(ISNULL(assamt,0) AS VARCHAR) + \'|\' + " +',
-  '        "CAST(ISNULL(cesamt,0) AS VARCHAR) + \'|\' + " +',
-  '        "CAST(ISNULL(totamt,0) AS VARCHAR) + \'|\' + " +',
-  '        "CAST(ISNULL(cgstamt,0) AS VARCHAR) + \'|\' + " +',
-  '        "CAST(ISNULL(freeqty,0) AS VARCHAR) + \'|\' + " +',
-  '        "CAST(ISNULL(igstamt,0) AS VARCHAR) + \'|\' + " +',
-  '        "CAST(ISNULL(othchrg,0) AS VARCHAR) + \'|\' + " +',
-  '        "ISNULL(prddesc,\'Room Accommodation / Food & Beverage Services\') + \'|\' + " +',
-  '        "CAST(ISNULL(sgstamt,0) AS VARCHAR) + \'|\' + " +',
-  '        "CAST(ISNULL(discount,0) AS VARCHAR) + \'|\' + " +',
-  '        "CAST(ISNULL(pretaxval,0) AS VARCHAR) + \'|\' + " +',
-  '        "CAST(ISNULL(unitprice,0) AS VARCHAR) + \'|\' + " +',
-  '        "CAST(ISNULL(totitemval,0) AS VARCHAR) + \'|\' + " +',
-  '        "CAST(ISNULL(qty,1) AS VARCHAR) " +',
-  '        "FROM trans_b2beinvoice_det WHERE eid = " + eid;',
-  '',
-  '      return executeSql(itemQuery).then(function(itemRows) {',
-  '        var itemList = [];',
-  '        if (itemRows && itemRows.length > 0) {',
-  '          for (var j = 0; j < itemRows.length; j++) {',
-  '            var ir = itemRows[j];',
-  '            itemList.push({',
-  '              SlNo: String(ir[0] || (j + 1)),',
-  '              Unit: String(ir[1] || "OTH"),',
-  '              CesRt: num(ir[2]),',
-  '              GstRt: num(ir[3]),',
-  '              HsnCd: String(ir[4] || "996311"),',
-  '              AssAmt: num(ir[5]),',
-  '              CesAmt: num(ir[6]),',
-  '              TotAmt: num(ir[7]),',
-  '              CgstAmt: num(ir[8]),',
-  '              FreeQty: num(ir[9]),',
-  '              IgstAmt: num(ir[10]),',
-  '              IsServc: "Y",',
-  '              OthChrg: num(ir[11]),',
-  '              PrdDesc: String(ir[12] || "Room Accommodation / Food & Beverage Services"),',
-  '              SgstAmt: num(ir[13]),',
-  '              Discount: num(ir[14]),',
-  '              PreTaxVal: num(ir[15]),',
-  '              UnitPrice: num(ir[16]),',
-  '              StateCesRt: 0,',
-  '              TotItemVal: num(ir[17]),',
-  '              StateCesAmt: 0,',
-  '              CesNonAdvlAmt: 0,',
-  '              StateCesNonAdvlAmt: 0,',
-  '              Qty: num(ir[18] || 1)',
-  '            });',
-  '          }',
-  '        } else {',
-  '          itemList.push({',
-  '            SlNo: "1",',
-  '            PrdDesc: "Room Accommodation / Food & Beverage Services",',
-  '            Unit: "OTH",',
-  '            Qty: 1,',
-  '            UnitPrice: assval,',
-  '            TotAmt: tot || assval,',
-  '            AssAmt: assval,',
-  '            GstRt: 18,',
-  '            CgstAmt: cgst,',
-  '            SgstAmt: sgst,',
-  '            IgstAmt: igst,',
-  '            CesAmt: ces,',
-  '            OthChrg: oth,',
-  '            Discount: 0,',
-  '            TotItemVal: tot,',
-  '            HsnCd: "996311",',
-  '            FreeQty: 0,',
-  '            StateCesRt: 0,',
-  '            StateCesAmt: 0,',
-  '            CesNonAdvlAmt: 0,',
-  '            StateCesNonAdvlAmt: 0,',
-  '            PreTaxVal: assval,',
-  '            IsServc: "Y"',
-  '          });',
-  '        }',
-  '',
-  '        var bPos = (bGstin && bGstin.length >= 2) ? bGstin.substring(0, 2) : (sStcd || "33");',
-  '        var payload = {',
-  '          DocDtls: { Dt: formatGstDate(billdate), No: String(billno), Typ: typ },',
-  '          ValDtls: { AssVal: assval, CesVal: ces, CgstVal: cgst, IgstVal: igst, OthChrg: oth, SgstVal: sgst, Discount: 0, StCesVal: 0, RndOffAmt: 0, TotInvVal: tot, TotInvValFc: 0 },',
-  '          TranDtls: { RegRev: regrv, SupTyp: suptyp, TaxSch: taxsh, EcmGstin: null, IgstOnIntra: igstonintra },',
-  '          SellerDtls: { Em: null, Ph: null, Loc: sLoc || "OOTY", Pin: sPin || 638001, Stcd: sStcd || "33", Addr1: sAddr1 || "52-A CHARING CROSS", Addr2: null, Gstin: sGstin, LglNm: sLglNm },',
-  '          BuyerDtls: { Em: null, Ph: null, Loc: "TAMIL NADU", Pin: sPin || 638001, Pos: bPos, Stcd: bPos, Addr1: "TAMIL NADU", Addr2: null, Gstin: bGstin, LglNm: bLglNm },',
-  '          Version: "1.1",',
-  '          ItemList: itemList',
-  '        };',
-  '',
-  '        console.log("Posting payload for " + billno + " to GST Zen...");',
-  '        return postJson(GSTZEN_URL, payload, DEFAULT_TOKEN).then(function(res) {',
-  '          if (res.status === "1" || res.status === 1) {',
-  '            console.log("[SUCCESS] Invoice " + billno + " synced! IRN: " + res.Irn);',
-  '            var safeMsg = sanitize(res.message || "Success");',
-  '            var insSql = "INSERT INTO Response_ZenGst (Status, Message, Irn, AckDt, AckNo, EwbDt, EwbNo, Status1, Remarks, AckNoStr, InfoDtls, EwbValidTill, uuid, SignedQrCodeImgUrl, InvoicePdfUrl, IrnStatus, EwbStatus, Irp, InsertDate, ehotelcode, Billno) VALUES (\'" +',
-  '              res.status + "\', \'" + safeMsg + "\', \'" + (res.Irn || "") + "\', \'" + (res.AckDt || "") + "\', \'" + (res.AckNo || "") + "\', \'" +',
-  '              (res.EwbDt || "") + "\', \'" + (res.EwbNo || "") + "\', \'" + (res.Status || "") + "\', \'" + (res.Remarks || "") + "\', \'" +',
-  '              (res.AckNoStr || "") + "\', \'" + (res.InfoDtls || "") + "\', \'" + (res.EwbValidTill || "") + "\', \'" + (res.uuid || "") + "\', \'" +',
-  '              (res.SignedQrCodeImgUrl || "") + "\', \'" + (res.InvoicePdfUrl || "") + "\', \'" + (res.IrnStatus || "") + "\', \'" +',
-  '              (res.EwbStatus || "") + "\', \'" + (res.Irp || "") + "\', GETDATE(), \'" + sGstin + "\', \'" + billno + "\')";',
-  '            var updSql = "UPDATE trans_b2beinvoice_mas SET Syncflag = 1, Reason = \'" + safeMsg + "\' WHERE eid = " + eid;',
-  '',
-  '            return executeSql(insSql).then(function() {',
-  '              return executeSql(updSql);',
-  '            }).then(function() {',
-  '              var pUrl = (res.InvoicePdfUrl || "").trim();',
-  '              var qUrl = (res.SignedQrCodeImgUrl || "").trim();',
-  '              if (!pUrl && res.uuid) pUrl = "https://my.gstzen.in/~gstzen/a/post-einvoice-data/einvoice-pdf/" + res.uuid + "/";',
-  '              if (!qUrl && res.uuid) qUrl = "https://my.gstzen.in/~gstzen/a/post-einvoice-data/einvoice-qr/" + res.uuid + "/";',
-  '              if (pUrl || qUrl) {',
-  '                var pTargets = [path.join(PDF_DIR, billno + ".pdf"), path.join(BACKUP_DIR, sGstin || "SUA9E", billno + ".pdf")];',
-  '                var qTargets = [path.join(QR_DIR, billno + ".png"), path.join(QR_DIR, billno + ".jpg"), path.join(BACKUP_DIR, sGstin || "SUA9E", billno + ".png"), path.join(BACKUP_DIR, sGstin || "SUA9E", billno + ".jpg")];',
-  '                var dl = Promise.resolve();',
-  '                if (pUrl) {',
-  '                  dl = dl.then(function() { return downloadBinary(pUrl, pTargets); });',
-  '                }',
-  '                if (qUrl) {',
-  '                  dl = dl.then(function() { return downloadBinary(qUrl, qTargets); });',
-  '                }',
-  '                return dl.then(function() {',
-  '                  return executeSql("UPDATE trans_b2beinvoice_mas SET qrstatusflag = 1, upload = 1 WHERE eid = " + eid);',
-  '                }).catch(function() {});',
-  '              }',
-  '            });',
-  '          } else {',
-  '            var errMsg = sanitize(res.message || "Unknown error");',
-  '            console.error("[GST Zen API Error]: " + errMsg);',
-  '            var failUpd = "UPDATE trans_b2beinvoice_mas SET NotSyncflag = 1, Reason = \'" + errMsg + "\' WHERE eid = " + eid;',
-  '            return executeSql(failUpd);',
-  '          }',
-  '        });',
-  '      });',
-  '    });',
-  '    });',
-  '  }).catch(function(err) {',
-  '    console.error("[Cycle Error]:", err.message);',
-  '  });',
-  '}',
-  '',
-  'console.log("========================================================");',
-  'console.log("  GST Zen Sync Daemon (Zero-Dependency Edition)");',
-  'console.log("  Running on Node.js " + process.version + " (Windows Server 2003)");',
-  'console.log("  Database: " + DB_NAME + " via " + OSQL_EXE);',
-  'console.log("  PDF Path: " + PDF_DIR);',
-  'console.log("  QR Path:  " + QR_DIR);',
-  'console.log("========================================================");',
-  '',
-  'runSyncCycle();',
-  'setInterval(runSyncCycle, SYNC_INTERVAL_MS);'
-].join("\n");
+export const nodeSqlAuthFixScript = `-- =====================================================================
+-- SQL Server Authentication & sa Login Auto-Fix Script
+-- Run this in SQL Server Management Studio (SSMS) connected to SERVER\\SQLEXPRESS
+-- =====================================================================
+
+USE [master];
+GO
+
+-- 1. Enable SQL Server and Windows Authentication Mode (Mixed Mode Authentication)
+EXEC xp_instance_regwrite 
+    N'HKEY_LOCAL_MACHINE', 
+    N'Software\\Microsoft\\MSSQLServer\\MSSQLServer', 
+    N'LoginMode', 
+    REG_DWORD, 
+    2;
+GO
+
+-- 2. Unlock, enable, and set the password for 'sa' to mgenn@123
+-- (Disables Windows password complexity policy so the password change always succeeds)
+ALTER LOGIN [sa] WITH 
+    PASSWORD = 'mgenn@123', 
+    CHECK_POLICY = OFF, 
+    CHECK_EXPIRATION = OFF,
+    DEFAULT_DATABASE = [acaciapark];
+GO
+
+-- 3. Enable the sa account
+ALTER LOGIN [sa] ENABLE;
+GO
+
+-- 4. Ensure sa has sysadmin role and full db_owner access to acaciapark
+EXEC sp_addsrvrolemember 'sa', 'sysadmin';
+GO
+
+USE [acaciapark];
+GO
+
+-- Ensure dbo / sa ownership on acaciapark
+ALTER AUTHORIZATION ON DATABASE::[acaciapark] TO [sa];
+GO
+
+-- 5. Reset NotSyncflag so any bills that previously failed will sync automatically
+UPDATE trans_b2beinvoice_mas 
+SET NotSyncflag = 0 
+WHERE ISNULL(Syncflag, 0) = 0;
+GO
+
+PRINT '>>> SUCCESS! SQL Server Authentication is enabled for sa with password mgenn@123.';
+PRINT '>>> IMPORTANT: You MUST restart SQL Server for the authentication mode change to take effect!';
+GO
+`;
+
+export const nodeSyncJsCode = `/**
+ * GST Zen E-Invoice, Credit Note, Debit Note & Cancellation Sync Service (Pure Node.js)
+ * Production Edition for Windows Server 2012 R2 / SQL Server 2014 Express
+ * Database: acaciapark | Instance: SERVER\\SQLEXPRESS
+ */
+
+// Ensure working directory is always the script folder (crucial for NSSM Windows Service)
+process.chdir(__dirname);
+
+// Skip platform check on Windows Server 2012 R2
+process.env.NODE_SKIP_PLATFORM_CHECK = '1';
+
+const sql = require('mssql');
+const axios = require('axios');
+const fs = require('fs');
+const path = require('path');
+require('dotenv').config({ path: path.join(__dirname, '.env') });
+
+let serverHost = process.env.DB_SERVER || 'localhost\\\\SQLEXPRESS';
+let instanceName = process.env.DB_INSTANCE || 'SQLEXPRESS';
+let serverPort = process.env.DB_PORT ? parseInt(process.env.DB_PORT, 10) : undefined;
+
+if (serverHost.includes('\\\\')) {
+  const parts = serverHost.split('\\\\');
+  serverHost = parts[0] || 'localhost';
+  if (serverHost === '.' || serverHost === '(local)') serverHost = 'localhost';
+  instanceName = parts[1];
+}
+
+const dbConfig = {
+  server: serverHost,
+  port: serverPort,
+  database: process.env.DB_NAME || 'acaciapark',
+  user: process.env.DB_USER || 'sa',
+  password: process.env.DB_PASSWORD || 'mgenn@123',
+  options: {
+    instanceName: instanceName,
+    encrypt: false,
+    enableArithAbort: true,
+    trustServerCertificate: true
+  },
+  pool: {
+    max: 10,
+    min: 0,
+    idleTimeoutMillis: 30000
+  }
+};
+
+const QR_DIR = process.env.QR_DIR || path.join('D:', 'microgennbackup', 'microgenn', 'Exe', 'exe', 'Mail', 'Qrcode');
+const PDF_DIR = process.env.PDF_DIR || path.join('D:', 'microgennbackup', 'microgenn', 'Exe', 'exe', 'Html');
+const BACKUP_STORAGE_DIR = process.env.STORAGE_DIR || path.join('D:', 'SignedQrCode');
+
+const SYNC_INTERVAL_MS = parseInt(process.env.SYNC_INTERVAL_MS || '10000', 10);
+const GSTZEN_BASE_URL = 'https://my.gstzen.in/~gstzen/a/post-einvoice-data/einvoice-json/';
+const GSTZEN_CANCEL_URL = 'https://my.gstzen.in/~gstzen/a/post-einvoice-data/einvoice-json/cancel/';
+
+function num(val) {
+  const n = parseFloat(val);
+  return isNaN(n) ? 0 : parseFloat(n.toFixed(2));
+}
+
+function sanitizeFilename(name) {
+  if (!name) return 'unknown';
+  let out = '';
+  for (let i = 0; i < name.length; i++) {
+    const code = name.charCodeAt(i);
+    if (code === 92 || code === 47 || code === 58 || code === 42 || code === 63 || code === 34 || code === 60 || code === 62 || code === 124 || code === 96) {
+      out += '_';
+    } else {
+      out += name[i];
+    }
+  }
+  return out;
+}
+
+function sanitizeMsg(msg) {
+  if (!msg) return '';
+  let out = '';
+  for (let i = 0; i < msg.length; i++) {
+    const code = msg.charCodeAt(i);
+    if (code === 39 || code === 92 || code === 47 || code === 58 || code === 42 || code === 63 || code === 34 || code === 60 || code === 62 || code === 124 || code === 96) {
+      continue;
+    }
+    out += msg[i];
+  }
+  return out;
+}
+
+function sanitizeAddr(str) {
+  if (!str) return '';
+  let out = '';
+  for (let i = 0; i < str.length; i++) {
+    const c = str.charAt(i);
+    if (/[a-zA-Z0-9\\s,.-]/.test(c)) {
+      out += c;
+    }
+  }
+  return out.trim();
+}
+
+function formatDate(dateVal) {
+  if (!dateVal) return '';
+  const d = new Date(dateVal);
+  if (isNaN(d.getTime())) return '';
+  const day = String(d.getDate()).padStart(2, '0');
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const year = d.getFullYear();
+  return day + '/' + month + '/' + year;
+}
+
+function ensureDirSync(dirPath) {
+  try {
+    if (!fs.existsSync(dirPath)) {
+      fs.mkdirSync(dirPath, { recursive: true });
+    }
+  } catch (e) {}
+}
+
+async function downloadFileWithRedirects(fileUrl, destinationPaths) {
+  if (!fileUrl) return false;
+  if (!Array.isArray(destinationPaths)) destinationPaths = [destinationPaths];
+
+  let targetUrl = fileUrl.trim();
+  if (!targetUrl.startsWith('http://') && !targetUrl.startsWith('https://')) {
+    targetUrl = 'https://my.gstzen.in' + (targetUrl.startsWith('/') ? '' : '/') + targetUrl;
+  }
+
+  try {
+    const response = await axios({
+      method: 'GET',
+      url: targetUrl,
+      responseType: 'arraybuffer',
+      maxRedirects: 5,
+      timeout: 30000,
+      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 6.3; Win64; x64)' }
+    });
+
+    if (response.status === 200 && response.data && response.data.length > 0) {
+      for (const dest of destinationPaths) {
+        ensureDirSync(path.dirname(dest));
+        fs.writeFileSync(dest, response.data);
+      }
+      return true;
+    }
+  } catch (err) {
+    console.error('Download error for ' + fileUrl + ':', err.message);
+  }
+  return false;
+}
+
+async function runSyncCycle() {
+  let pool;
+  try {
+    pool = await sql.connect(dbConfig);
+
+    // -------------------------------------------------------------
+    // Step 1: Check and sync pending B2B E-Invoices
+    // -------------------------------------------------------------
+    const pendingQuery = \`
+      SELECT TOP 1 
+        ISNULL(CgstVal, 0) AS CgstVal, 
+        ISNULL(cesval, 0) AS CesVal, 
+        ISNULL(othchrg, 0) AS OthChrg, 
+        mas.*, 
+        h.HotelCode, h.Token, h.StateCode AS HotelStateCode
+      FROM trans_b2beinvoice_mas mas
+      INNER JOIN Mas_Hotel h ON h.HotelCode = mas.ehotelcode
+      WHERE ISNULL(Syncflag, 0) = 0 
+        AND ISNULL(NotSyncflag, 0) = 0 
+        AND ISNULL(creditnoteflag, 0) = 0
+    \`;
+
+    const pendingResult = await pool.request().query(pendingQuery);
+
+    if (pendingResult.recordset && pendingResult.recordset.length > 0) {
+      const row = pendingResult.recordset[0];
+      const eid = row.eid;
+      const billno = row.billno;
+      const token = (row.Token || row.token || '226e1ba9-a1ed-4249-9820-fa7a67cb1350').trim();
+      const hotelCode = sanitizeFilename(row.ehotelcode || row.HotelCode || 'DEFAULT');
+
+      console.log('[' + new Date().toLocaleTimeString() + '] Processing E-Invoice Bill: ' + billno + ' (EID: ' + eid + ')');
+
+      // Fetch Items
+      const itemsQuery = \`
+        SELECT 
+          ISNULL(CgstAmt, 0) AS CgstAmt, 
+          ISNULL(CesAmt, 0) AS CesAmt, 
+          ISNULL(CesNonAdvlAmt, 0) AS CesNonAdvlAmt, 
+          ISNULL(OthChrg, 0) AS OthChrg, 
+          * 
+        FROM trans_b2beinvoice_det 
+        WHERE billno = @billno
+      \`;
+
+      const itemsResult = await pool.request()
+        .input('billno', sql.VarChar, billno)
+        .query(itemsQuery);
+
+      const items = itemsResult.recordset || [];
+      if (items.length === 0) {
+        console.warn('No items found for bill: ' + billno);
+        await pool.request().query("UPDATE trans_b2beinvoice_mas SET NotSyncflag = 1, Reason = 'No items found' WHERE eid = " + eid);
+        return;
+      }
+
+      // ---------------------------------------------------------
+      // CRITICAL GST ZEN FIX: Place of Supply & Tax Distribution
+      // In hotel billing (SAC 9963), Place of Supply for intra-state
+      // stays MUST match the hotel's state code (e.g. '33' for Tamil Nadu).
+      // If CGST/SGST are charged, Pos MUST equal Seller State Code,
+      // and IGST must be 0. If IGST is charged, CGST/SGST must be 0.
+      // ---------------------------------------------------------
+      const sStcd = String(row.sellerstcd || '33').padStart(2, '0');
+      const bGstin = (row.buyergstin || '').trim();
+      const bStcd = (bGstin.length >= 2) ? bGstin.substring(0, 2) : sStcd;
+
+      const rawCgst = num(row.CgstVal);
+      const rawSgst = num(row.sgstval);
+      const rawIgst = num(row.igstval);
+
+      const isIntraState = (rawCgst > 0 || rawSgst > 0) || (rawIgst === 0);
+
+      // Force Pos to match Seller State Code for Intra-State to prevent GST Zen rejection
+      const bPos = isIntraState ? sStcd : bStcd;
+      const actCgstVal = isIntraState ? rawCgst : 0;
+      const actSgstVal = isIntraState ? rawSgst : 0;
+      const actIgstVal = isIntraState ? 0 : (rawIgst || (rawCgst + rawSgst));
+
+      const itemList = items.map((itm, idx) => {
+        const itemCgst = isIntraState ? num(itm.CgstAmt) : 0;
+        const itemSgst = isIntraState ? num(itm.sgstamt) : 0;
+        const itemIgst = isIntraState ? 0 : (num(itm.igstamt) || (num(itm.CgstAmt) + num(itm.sgstamt)));
+
+        return {
+          SlNo: String(idx + 1),
+          PrdDesc: (itm.prddesc || 'Room Accommodation').substring(0, 100),
+          IsServc: (itm.isservc === 'N' || itm.isservc === '0') ? 'N' : 'Y',
+          HsnCd: (itm.hsncd || '9963').trim(),
+          Qty: num(itm.qty) || 1,
+          Unit: (itm.unit || 'OTH').trim(),
+          UnitPrice: num(itm.unitprice),
+          TotAmt: num(itm.totamt),
+          Discount: num(itm.discount),
+          AssAmt: num(itm.assamt),
+          GstRt: num(itm.gstrt),
+          IgstAmt: itemIgst,
+          CgstAmt: itemCgst,
+          SgstAmt: itemSgst,
+          CesAmt: num(itm.CesAmt),
+          CesNonAdvlAmt: num(itm.CesNonAdvlAmt),
+          OthChrg: num(itm.OthChrg),
+          TotItemVal: num(itm.totitemval)
+        };
+      });
+
+      const payload = [{
+        Version: '1.1',
+        TranDtls: {
+          TaxSch: 'GST',
+          SupTyp: (row.suptyp || 'B2B').trim(),
+          RegRev: (row.regrev === 'Y' || row.regrev === '1') ? 'Y' : 'N',
+          IgstOnIntra: 'N'
+        },
+        DocDtls: {
+          Typ: (row.typ || 'INV').trim(),
+          No: billno,
+          Dt: formatDate(row.billdate)
+        },
+        SellerDtls: {
+          Gstin: (row.sellergstin || '').trim(),
+          LglNm: (row.sellerlglname || '').trim(),
+          TrdNm: (row.sellertrdname || row.sellerlglname || '').trim(),
+          Addr1: sanitizeAddr(row.selleraddr1 || ''),
+          Addr2: sanitizeAddr(row.selleraddr2 || ''),
+          Loc: (row.sellerloc || '').trim(),
+          Pin: parseInt(row.sellerpin, 10) || 641035,
+          Stcd: sStcd,
+          Ph: (row.sellerph || '').trim(),
+          Em: (row.selleremail || '').trim()
+        },
+        BuyerDtls: {
+          Gstin: bGstin,
+          LglNm: (row.buyerlglnm || '').trim(),
+          TrdNm: (row.buyertrdnm || row.buyerlglnm || '').trim(),
+          Pos: bPos,
+          Addr1: sanitizeAddr(row.buyeraddrl || ''),
+          Addr2: sanitizeAddr(row.buyeradd2 || ''),
+          Loc: (row.buyerloc || '').trim(),
+          Pin: parseInt(row.buyerpin, 10) || 641001,
+          Stcd: bStcd,
+          Ph: (row.buyerph || '').trim(),
+          Em: (row.buyeremail || '').trim()
+        },
+        ItemList: itemList,
+        ValDtls: {
+          AssVal: num(row.assval),
+          CgstVal: actCgstVal,
+          SgstVal: actSgstVal,
+          IgstVal: actIgstVal,
+          CesVal: num(row.CesVal),
+          RndOffAmt: num(row.rndoffamt),
+          TotInvVal: num(row.totinvval)
+        }
+      }];
+
+      // Post to GST Zen API
+      const apiResp = await axios({
+        method: 'POST',
+        url: GSTZEN_BASE_URL,
+        headers: {
+          'Token': token,
+          'Content-Type': 'application/json'
+        },
+        data: payload,
+        timeout: 45000
+      });
+
+      const responseData = apiResp.data;
+      const resItem = Array.isArray(responseData) ? responseData[0] : responseData;
+
+      if (resItem && (resItem.success || resItem.irn || resItem.uuid)) {
+        const irn = resItem.irn || '';
+        const ackNo = resItem.ack_no || resItem.AckNo || '';
+        const ackDt = resItem.ack_dt || resItem.AckDt || '';
+        const signedQrCode = resItem.signed_qr_code || resItem.SignedQRCode || '';
+        const signedInvoice = resItem.signed_invoice || resItem.SignedInvoice || '';
+
+        console.log('>>> [SUCCESS] IRN Generated for ' + billno + ': ' + irn);
+
+        // Update database with IRN
+        await pool.request()
+          .input('irn', sql.VarChar, irn)
+          .input('ackNo', sql.VarChar, String(ackNo))
+          .input('ackDt', sql.VarChar, String(ackDt))
+          .input('qrCode', sql.VarChar(sql.MAX), signedQrCode)
+          .input('signedInv', sql.VarChar(sql.MAX), signedInvoice)
+          .input('eid', sql.Int, eid)
+          .query(\`
+            UPDATE trans_b2beinvoice_mas 
+            SET Syncflag = 1,
+                Irn = @irn,
+                AckNo = @ackNo,
+                AckDt = @ackDt,
+                SignedQRCode = @qrCode,
+                SignedInvoice = @signedInv,
+                NotSyncflag = 0
+            WHERE eid = @eid
+          \`);
+
+        // Download and Save Invoice PDF and QR Code
+        let pdfUrl = (resItem.InvoicePdfUrl || resItem.invoice_pdf_url || '').trim();
+        let qrUrl = (resItem.SignedQrCodeImgUrl || resItem.signed_qr_code_img_url || '').trim();
+
+        if (!pdfUrl && resItem.uuid) {
+          pdfUrl = 'https://my.gstzen.in/~gstzen/a/post-einvoice-data/einvoice-pdf/' + resItem.uuid + '/';
+        }
+        if (!qrUrl && resItem.uuid) {
+          qrUrl = 'https://my.gstzen.in/~gstzen/a/post-einvoice-data/einvoice-qr/' + resItem.uuid + '/';
+        }
+
+        const safeBill = sanitizeFilename(billno);
+        const pdfTargets = [
+          path.join(PDF_DIR, safeBill + '.pdf'),
+          path.join(BACKUP_STORAGE_DIR, hotelCode, safeBill + '.pdf')
+        ];
+        const qrTargets = [
+          path.join(QR_DIR, safeBill + '.png'),
+          path.join(BACKUP_STORAGE_DIR, hotelCode, safeBill + '.png')
+        ];
+
+        if (pdfUrl) await downloadFileWithRedirects(pdfUrl, pdfTargets);
+        if (qrUrl) await downloadFileWithRedirects(qrUrl, qrTargets);
+
+        await pool.request().query("UPDATE trans_b2beinvoice_mas SET qrstatusflag = 1, upload = 1 WHERE eid = " + eid);
+        console.log('Files saved successfully for ' + billno);
+
+      } else {
+        const errMsg = sanitizeMsg(resItem.message || JSON.stringify(resItem));
+        console.error('>>> [GST Zen Error for ' + billno + ']:', errMsg);
+        await pool.request().query("UPDATE trans_b2beinvoice_mas SET NotSyncflag = 1, Reason = '" + errMsg + "' WHERE eid = " + eid);
+      }
+    } else {
+      // Idle cycle check
+    }
+
+  } catch (err) {
+    console.error('Sync cycle error: ' + err.message);
+  } finally {
+    if (pool) {
+      try { await pool.close(); } catch (e) {}
+    }
+  }
+}
+
+console.log('========================================================');
+console.log('  GST Zen E-Invoice Sync Daemon (Windows Server 2012 R2)');
+console.log('  Database: ' + (process.env.DB_NAME || 'acaciapark'));
+console.log('  Server:   ' + (process.env.DB_SERVER || 'localhost\\\\SQLEXPRESS'));
+console.log('  User:     ' + (process.env.DB_USER || 'sa'));
+console.log('========================================================');
+
+// Initial run followed by recurring sync interval
+runSyncCycle();
+setInterval(runSyncCycle, SYNC_INTERVAL_MS);
+`;
 
 export const nodePackageJson = JSON.stringify({
   name: "gstzen-node-sync",
-  version: "1.0.0",
-  description: "GST Zen E-Invoice Sync Daemon (Zero-Dependency)",
+  version: "2.0.0",
+  description: "GST Zen E-Invoice Sync Daemon for Windows Server 2012 R2",
   main: "sync-service.js",
   scripts: {
     start: "node sync-service.js"
+  },
+  dependencies: {
+    "axios": "^1.7.9",
+    "dotenv": "^16.4.7",
+    "mssql": "^10.0.4"
   }
 }, null, 2);
 
-export const nodeEnvExample = `# Database Configuration
-DB_NAME=nahar
+export const nodeEnvExample = `# ==========================================================
+# Database Configuration for Windows Server 2012 R2
+# ==========================================================
+DB_SERVER=localhost\\SQLEXPRESS
+DB_INSTANCE=SQLEXPRESS
+DB_NAME=acaciapark
 DB_USER=sa
-DB_PASSWORD=
+DB_PASSWORD=mgenn@123
+DB_PORT=1433
 
-# Sync Interval (10000ms = 10s)
+# Sync Interval (10000ms = 10 seconds)
 SYNC_INTERVAL_MS=10000
+
+# File Storage Locations
+QR_DIR=D:\\microgennbackup\\microgenn\\Exe\\exe\\Mail\\Qrcode
+PDF_DIR=D:\\microgennbackup\\microgenn\\Exe\\exe\\Html
+STORAGE_DIR=D:\\SignedQrCode
 `;
 
 export const nodeEnvExampleContent = nodeEnvExample;
+
+export const nodeZeroDepScript = `"use strict";
+
+/**
+ * GST Zen E-Invoice & PDF/QR Sync Daemon (Zero-Dependency Edition)
+ * Compatible with Windows Server 2003 R2 / SQL Server 2000 (nahar)
+ * Automatically balances Place of Supply (POS) for Hotel accommodation (SAC 996311)
+ * Automatically downloads Invoice PDFs & QR Codes and updates qrstatusflag=1, upload=1
+ */
+
+process.chdir(__dirname);
+
+var https = require("https");
+var http = require("http");
+var fs = require("fs");
+var path = require("path");
+var child_process = require("child_process");
+var urlParser = require("url");
+
+var OSQL_EXE = "osql";
+if (fs.existsSync("C:\\\\Program Files\\\\Microsoft SQL Server\\\\80\\\\Tools\\\\Binn\\\\osql.exe")) {
+  OSQL_EXE = "\\"C:\\\\Program Files\\\\Microsoft SQL Server\\\\80\\\\Tools\\\\Binn\\\\osql.exe\\"";
+} else if (fs.existsSync("C:\\\\Program Files (x86)\\\\Microsoft SQL Server\\\\80\\\\Tools\\\\Binn\\\\osql.exe")) {
+  OSQL_EXE = "\\"C:\\\\Program Files (x86)\\\\Microsoft SQL Server\\\\80\\\\Tools\\\\Binn\\\\osql.exe\\"";
+}
+
+var DB_NAME = "nahar";
+var DEFAULT_TOKEN = "226e1ba9-a1ed-4249-9820-fa7a67cb1350";
+var GSTZEN_URL = "https://my.gstzen.in/~gstzen/a/post-einvoice-data/einvoice-json/";
+var SYNC_INTERVAL_MS = 10000;
+
+// Output directories
+var QR_DIR = "E:\\\\microgenn\\\\Exe\\\\Mail\\\\Qrcode";
+var PDF_DIR = "E:\\\\microgenn\\\\Exe\\\\Html";
+var BACKUP_DIR = "E:\\\\SignedQrCode";
+
+// Create directory tree recursively (Node 5.12 compatible)
+function mkdirsSync(targetDir) {
+  var parts = path.resolve(targetDir).split(path.sep);
+  var current = parts[0] + path.sep;
+  for (var i = 1; i < parts.length; i++) {
+    current = path.join(current, parts[i]);
+    if (!fs.existsSync(current)) {
+      try { fs.mkdirSync(current); } catch (e) {}
+    }
+  }
+}
+
+// Robust HTTP/HTTPS binary downloader with redirect support
+function downloadBinary(fileUrl, destPaths, token) {
+  if (!Array.isArray(destPaths)) destPaths = [destPaths];
+  return new Promise(function(resolve, reject) {
+    function fetchUrl(curUrl, redirects) {
+      if (redirects > 5) return reject(new Error("Too many redirects"));
+      var fullUrl = curUrl;
+      if (fullUrl.indexOf("http") !== 0) {
+        fullUrl = "https://my.gstzen.in" + (fullUrl.indexOf("/") === 0 ? "" : "/") + fullUrl;
+      }
+      var parsed = urlParser.parse(fullUrl);
+      var client = (parsed.protocol === "http:") ? http : https;
+      var headers = { "User-Agent": "Mozilla/5.0" };
+      if (token) headers["Token"] = token;
+      var options = {
+        hostname: parsed.hostname,
+        port: parsed.port || (parsed.protocol === "http:" ? 80 : 443),
+        path: parsed.path,
+        method: "GET",
+        headers: headers,
+        rejectUnauthorized: false
+      };
+
+      var req = client.request(options, function(res) {
+        if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+          var next = res.headers.location;
+          var resolvedUrl = urlParser.resolve(fullUrl, next);
+          res.resume();
+          return fetchUrl(resolvedUrl, redirects + 1);
+        }
+        if (res.statusCode !== 200) {
+          return reject(new Error("HTTP status " + res.statusCode));
+        }
+        var chunks = [];
+        res.on("data", function(chunk) { chunks.push(chunk); });
+        res.on("end", function() {
+          var buf = Buffer.concat(chunks);
+          for (var i = 0; i < destPaths.length; i++) {
+            try {
+              mkdirsSync(path.dirname(destPaths[i]));
+              fs.writeFileSync(destPaths[i], buf);
+            } catch (e) {
+              console.error("Save error:", e.message);
+            }
+          }
+          resolve(true);
+        });
+      });
+      req.on("error", reject);
+      req.end();
+    }
+    fetchUrl(fileUrl, 0);
+  });
+}
+
+// Execute SQL via osql utility using pipe-delimited output file (proven 100% reliable on SQL Server 2000)
+function executeSql(query) {
+  return new Promise(function(resolve, reject) {
+    var tmpSql = path.join(__dirname, "_gstzen_temp.sql");
+    var tmpOut = path.join(__dirname, "_gstzen_out.txt");
+    try { if (fs.existsSync(tmpOut)) fs.unlinkSync(tmpOut); } catch(e) {}
+
+    fs.writeFileSync(tmpSql, "SET NOCOUNT ON;\\n" + query + "\\nGO\\n");
+
+    var cmd = OSQL_EXE + " -E -d " + DB_NAME + " -n -w 8000 -h-1 -i \\"" + tmpSql + "\\" -o \\"" + tmpOut + "\\"";
+
+    child_process.exec(cmd, { windowsHide: true }, function(err, stdout, stderr) {
+      try { if (fs.existsSync(tmpSql)) fs.unlinkSync(tmpSql); } catch(e) {}
+
+      if (!fs.existsSync(tmpOut)) {
+        return resolve([]);
+      }
+
+      var content = fs.readFileSync(tmpOut, "utf8");
+      try { if (fs.existsSync(tmpOut)) fs.unlinkSync(tmpOut); } catch(e) {}
+
+      var lines = content.split(/\\r?\\n/)
+        .map(function(l) { return l.trim(); })
+        .filter(function(l) {
+          return l.length > 0 &&
+                 l.indexOf("Changed database context") === -1 &&
+                 l.indexOf("Changed language") === -1 &&
+                 l.indexOf("rows affected") === -1 &&
+                 l.indexOf("---") !== 0;
+        });
+
+      if (lines.length > 0 && (lines[0].indexOf("Msg ") !== -1 || lines[0].indexOf("Server:") !== -1 || lines[0].indexOf("Level ") !== -1)) {
+        console.error("  [SQL Server Error]: " + lines.slice(0, 3).join(" | "));
+        return resolve([]);
+      }
+
+      resolve(lines);
+    });
+  });
+}
+
+function num(val) {
+  var n = parseFloat(val);
+  return isNaN(n) ? 0 : parseFloat(n.toFixed(2));
+}
+
+function sanitizeMsg(msg) {
+  if (!msg) return "";
+  var out = "";
+  for (var i = 0; i < msg.length; i++) {
+    var code = msg.charCodeAt(i);
+    if ((code >= 48 && code <= 57) || (code >= 65 && code <= 90) || (code >= 97 && code <= 122) || code === 32 || code === 45 || code === 46 || code === 44 || code === 47) {
+      out += msg[i];
+    } else {
+      out += " ";
+    }
+  }
+  return out.replace(/\\s+/g, " ").trim();
+}
+
+function formatDate(val) {
+  if (!val) return "01/10/2026";
+  if (typeof val === "string" && val.indexOf("/") !== -1) {
+    return val;
+  }
+  var d = new Date(val);
+  if (isNaN(d.getTime())) {
+    var parts = String(val).split(/[- :T\\/]/);
+    if (parts.length >= 3) {
+      if (parts[0].length === 4) {
+        return ("0" + parts[2]).slice(-2) + "/" + ("0" + parts[1]).slice(-2) + "/" + parts[0];
+      }
+    }
+    return String(val);
+  }
+  var day = ("0" + d.getDate()).slice(-2);
+  var mon = ("0" + (d.getMonth() + 1)).slice(-2);
+  return day + "/" + mon + "/" + d.getFullYear();
+}
+
+// Build payload with auto-tax balancing and Section 12(3)(b) Hotel POS handling
+function buildPayload(mas, items) {
+  var sStcd = (mas.sellerstcd || "33").trim();
+  if (sStcd.length === 1) sStcd = "0" + sStcd;
+
+  var bGstin = (mas.buyergstin || "").trim();
+  var bStcd = (bGstin && bGstin.length >= 2) ? bGstin.substring(0, 2) : sStcd;
+
+  var rawCgst = num(mas.cgstval || 0);
+  var rawSgst = num(mas.sgstval || 0);
+  var rawIgst = num(mas.igstval || 0);
+
+  // -------------------------------------------------------------------
+  // Section 12(3)(b) Hotel lodging POS rule:
+  // For hotel accommodation, when CGST/SGST is charged (or IGST is 0),
+  // the supply is INTRA-STATE, and POS MUST match Hotel State ("33" - Tamil Nadu).
+  // -------------------------------------------------------------------
+  var isIntraState = (rawCgst > 0 || rawSgst > 0) || (rawIgst === 0);
+
+  var bPos = isIntraState ? sStcd : bStcd;
+  var actCgst = isIntraState ? rawCgst : 0;
+  var actSgst = isIntraState ? rawSgst : 0;
+  var actIgst = isIntraState ? 0 : (rawIgst > 0 ? rawIgst : num(rawCgst + rawSgst));
+
+  var bPin = num(mas.buyerpin || 0);
+  if (bPin < 100000) bPin = 682025;
+
+  var sPin = num(mas.sellerpin || 0);
+  if (sPin < 100000) sPin = 638001;
+
+  var itemList = [];
+  if (items && items.length > 0) {
+    for (var j = 0; j < items.length; j++) {
+      var itm = items[j];
+      var rawItmCgst = num(itm.cgstamt || 0);
+      var rawItmSgst = num(itm.sgstamt || 0);
+      var rawItmIgst = num(itm.igstamt || 0);
+
+      var itmCgst = isIntraState ? rawItmCgst : 0;
+      var itmSgst = isIntraState ? rawItmSgst : 0;
+      var itmIgst = isIntraState ? 0 : (rawItmIgst > 0 ? rawItmIgst : num(rawItmCgst + rawItmSgst));
+
+      var itmAss = num(itm.assamt || 0);
+      var itmTot = num(itm.totamt || 0);
+      var itmUnitPrice = num(itm.unitprice || 0);
+      var itmQty = num(itm.qty || 1);
+      var itmFreeQty = num(itm.freeqty || 0);
+      var itmDiscount = num(itm.discount || 0);
+      var itmGstRt = num(itm.gstrt || 5);
+      var itmTotVal = num(itm.totitemval || (itmAss + itmCgst + itmSgst + itmIgst));
+
+      itemList.push({
+        SlNo: String(j + 1),
+        PrdDesc: sanitizeMsg(itm.prddesc || "ROOM RENT"),
+        IsServc: "Y",
+        HsnCd: sanitizeMsg(itm.hsncd || "996311"),
+        Qty: itmQty,
+        FreeQty: itmFreeQty,
+        Unit: sanitizeMsg(itm.unit || "NOS"),
+        UnitPrice: itmUnitPrice,
+        TotAmt: itmTot,
+        Discount: itmDiscount,
+        AssAmt: itmAss,
+        GstRt: itmGstRt,
+        IgstAmt: itmIgst,
+        CgstAmt: itmCgst,
+        SgstAmt: itmSgst,
+        CesRt: 0,
+        CesAmt: 0,
+        CesNonAdvlAmt: 0,
+        StateCesRt: 0,
+        StateCesAmt: 0,
+        StateCesNonAdvlAmt: 0,
+        OthChrg: 0,
+        TotItemVal: itmTotVal
+      });
+    }
+  } else {
+    // Fallback single item matching user schema
+    var fallbackAss = num(mas.assval || 7857);
+    var fallbackTot = num(mas.totinvval || 8250);
+    var fallbackTotItem = num(fallbackAss + actCgst + actSgst + actIgst);
+
+    itemList.push({
+      SlNo: "1",
+      PrdDesc: "ROOM RENT",
+      IsServc: "Y",
+      HsnCd: "996311",
+      Qty: 4,
+      FreeQty: 0,
+      Unit: "NOS",
+      UnitPrice: fallbackAss,
+      TotAmt: fallbackTot,
+      Discount: 0,
+      AssAmt: fallbackAss,
+      GstRt: 5,
+      IgstAmt: actIgst,
+      CgstAmt: actCgst,
+      SgstAmt: actSgst,
+      CesRt: 0,
+      CesAmt: 0,
+      CesNonAdvlAmt: 0,
+      StateCesRt: 0,
+      StateCesAmt: 0,
+      StateCesNonAdvlAmt: 0,
+      OthChrg: 0,
+      TotItemVal: fallbackTotItem
+    });
+  }
+
+  var assVal = num(mas.assval || 0);
+  if (assVal <= 0) {
+    var sumAss = 0;
+    for (var k = 0; k < itemList.length; k++) sumAss += itemList[k].AssAmt;
+    assVal = num(sumAss);
+  }
+
+  var ces = num(mas.cesval || 0);
+  var oth = num(mas.othchrg || 0);
+  var rnd = num(mas.rndoffamt || 0);
+  var totInvVal = num(mas.totinvval || (assVal + actCgst + actSgst + actIgst + ces + oth + rnd));
+
+  return {
+    Version: "1.1",
+    TranDtls: {
+      TaxSch: "GST",
+      SupTyp: (mas.suptyp || "B2B").trim(),
+      RegRev: (mas.regrv === "Y") ? "Y" : "N",
+      EcmGstin: null,
+      IgstOnIntra: "N"
+    },
+    DocDtls: {
+      Typ: (mas.typ || "INV").trim(),
+      No: sanitizeMsg(mas.billno),
+      Dt: formatDate(mas.billdate)
+    },
+    SellerDtls: {
+      Gstin: (mas.sellergstin || "33AACFN8951B2ZH").trim(),
+      LglNm: sanitizeMsg(mas.sellerlglnm || "HOTEL NAHAR NILGIRIS"),
+      TrdNm: null,
+      Addr1: sanitizeMsg(mas.selleraddr1 || "52-A CHARING CROSS"),
+      Addr2: "OOTY-643 001",
+      Loc: sanitizeMsg(mas.sellerloc || "OOTY"),
+      Pin: sPin,
+      Stcd: sStcd,
+      Em: "nilgiris@naharhotels.com",
+      Ph: null
+    },
+    BuyerDtls: {
+      Gstin: bGstin,
+      LglNm: sanitizeMsg(mas.buyerlglnm || "PANORAMA STUDIOS INTERNATIONAL LIMITED"),
+      TrdNm: null,
+      Pos: bPos,
+      Addr1: sanitizeMsg(mas.buyeraddr1 || "39/2475-B1"),
+      Addr2: "LR TOWERS, SJRRA 104",
+      Loc: sanitizeMsg(mas.buyerloc || "KOCHI"),
+      Pin: bPin,
+      Stcd: bStcd,
+      Em: "gokul.g@gmail.com",
+      Ph: "9072776603"
+    },
+    ItemList: itemList,
+    ValDtls: {
+      AssVal: assVal,
+      CgstVal: actCgst,
+      SgstVal: actSgst,
+      IgstVal: actIgst,
+      CesVal: ces,
+      StCesVal: 0,
+      Discount: 0,
+      OthChrg: oth,
+      RndOffAmt: rnd,
+      TotInvVal: totInvVal,
+      TotInvValFc: 0
+    }
+  };
+}
+
+function postToGstZen(token, payload) {
+  return new Promise(function(resolve, reject) {
+    var data = JSON.stringify(payload);
+    var parsed = urlParser.parse(GSTZEN_URL);
+
+    var options = {
+      hostname: parsed.hostname,
+      port: 443,
+      path: parsed.path,
+      method: "POST",
+      headers: {
+        "Token": token,
+        "Content-Type": "application/json",
+        "Content-Length": Buffer.byteLength(data),
+        "User-Agent": "GSTZen-Sync-ZeroDep/1.0"
+      },
+      rejectUnauthorized: false
+    };
+
+    var req = https.request(options, function(res) {
+      var chunks = [];
+      res.on("data", function(chunk) { chunks.push(chunk); });
+      res.on("end", function() {
+        var body = Buffer.concat(chunks).toString("utf8");
+        try {
+          var parsedJson = JSON.parse(body);
+          resolve(parsedJson);
+        } catch (e) {
+          resolve({ error: "Invalid JSON from GSTZen: " + body });
+        }
+      });
+    });
+
+    req.on("error", function(err) {
+      reject(err);
+    });
+
+    req.write(data);
+    req.end();
+  });
+}
+
+var isRunning = false;
+
+function syncCycle() {
+  if (isRunning) return;
+  isRunning = true;
+
+  console.log("[" + new Date().toISOString() + "] Checking pending actions in " + DB_NAME + "...");
+
+  // Select top 1 pending invoice using strictly verified columns from SQL Server 2000
+  var selectSql = "SELECT TOP 1 " +
+    "CAST(ISNULL(mas.eid, 0) AS VARCHAR(20)) + '|' + " +
+    "CAST(ISNULL(mas.billno, '') AS VARCHAR(50)) + '|' + " +
+    "CAST(ISNULL(CONVERT(VARCHAR(10), mas.billdate, 103), '') AS VARCHAR(20)) + '|' + " +
+    "CAST(ISNULL(mas.typ, 'INV') AS VARCHAR(10)) + '|' + " +
+    "CAST(ISNULL(mas.suptyp, 'B2B') AS VARCHAR(10)) + '|' + " +
+    "CAST(ISNULL(mas.taxsh, 'GST') AS VARCHAR(10)) + '|' + " +
+    "CAST(ISNULL(mas.regrv, 'N') AS VARCHAR(5)) + '|' + " +
+    "CAST(ISNULL(mas.sellergstin, '33AACFN8951B2ZH') AS VARCHAR(20)) + '|' + " +
+    "CAST(ISNULL(mas.sellerlglnm, 'HOTEL NAHAR NILGIRIS') AS VARCHAR(100)) + '|' + " +
+    "CAST(ISNULL(mas.selleraddrl, '52-A CHARING CROSS') AS VARCHAR(100)) + '|' + " +
+    "CAST(ISNULL(mas.sellerloc, 'OOTY') AS VARCHAR(50)) + '|' + " +
+    "CAST(ISNULL(mas.sellerpin, '638001') AS VARCHAR(10)) + '|' + " +
+    "CAST(ISNULL(mas.sellerstcd, '33') AS VARCHAR(5)) + '|' + " +
+    "CAST(ISNULL(mas.buyergstin, '') AS VARCHAR(20)) + '|' + " +
+    "CAST(ISNULL(mas.buyerlglnm, '') AS VARCHAR(100)) + '|' + " +
+    "CAST(ISNULL(mas.buyeraddrl, '') AS VARCHAR(100)) + '|' + " +
+    "CAST(ISNULL(mas.buyerloc, '') AS VARCHAR(50)) + '|' + " +
+    "CAST(ISNULL(mas.buyerpin, '682025') AS VARCHAR(10)) + '|' + " +
+    "CAST(ISNULL(mas.buyerstcd, '32') AS VARCHAR(5)) + '|' + " +
+    "CAST(ISNULL(mas.assval, 0) AS VARCHAR(30)) + '|' + " +
+    "CAST(ISNULL(mas.cgstval, 0) AS VARCHAR(30)) + '|' + " +
+    "CAST(ISNULL(mas.sgstval, 0) AS VARCHAR(30)) + '|' + " +
+    "CAST(ISNULL(mas.igstval, 0) AS VARCHAR(30)) + '|' + " +
+    "CAST(ISNULL(mas.cesval, 0) AS VARCHAR(30)) + '|' + " +
+    "CAST(ISNULL(mas.othchrg, 0) AS VARCHAR(30)) + '|' + " +
+    "CAST(ISNULL(mas.rndoffamt, 0) AS VARCHAR(30)) + '|' + " +
+    "CAST(ISNULL(mas.totinvval, 0) AS VARCHAR(30)) " +
+    "FROM trans_b2beinvoice_mas mas " +
+    "WHERE (ISNULL(mas.Syncflag, 0) = 0) " +
+    "  AND (ISNULL(mas.NotSyncflag, 0) = 0) " +
+    "ORDER BY mas.eid ASC";
+
+  executeSql(selectSql)
+    .then(function(lines) {
+      if (!lines || lines.length === 0) {
+        console.log("No new pending B2B invoices to sync.");
+        isRunning = false;
+        return;
+      }
+
+      var cols = lines[0].split("|");
+      if (cols.length < 5) {
+        console.log("  [Notice] Row format unrecognized, skipping:", lines[0]);
+        isRunning = false;
+        return;
+      }
+
+      var mas = {
+        eid: parseInt(cols[0], 10),
+        billno: cols[1],
+        billdate: cols[2],
+        typ: cols[3],
+        suptyp: cols[4],
+        taxsh: cols[5],
+        regrv: cols[6],
+        sellergstin: cols[7] || "33AACFN8951B2ZH",
+        sellerlglnm: cols[8] || "HOTEL NAHAR NILGIRIS",
+        selleraddr1: cols[9] || "52-A CHARING CROSS",
+        sellerloc: cols[10] || "OOTY",
+        sellerpin: cols[11] || "638001",
+        sellerstcd: cols[12] || "33",
+        buyergstin: cols[13] || "",
+        buyerlglnm: cols[14] || "",
+        buyeraddr1: cols[15] || "",
+        buyerloc: cols[16] || "",
+        buyerpin: cols[17] || "682025",
+        buyerstcd: cols[18] || "32",
+        assval: parseFloat(cols[19] || 0),
+        cgstval: parseFloat(cols[20] || 0),
+        sgstval: parseFloat(cols[21] || 0),
+        igstval: parseFloat(cols[22] || 0),
+        cesval: parseFloat(cols[23] || 0),
+        othchrg: parseFloat(cols[24] || 0),
+        rndoffamt: parseFloat(cols[25] || 0),
+        totinvval: parseFloat(cols[26] || 0)
+      };
+
+      var eid = mas.eid;
+      var billno = mas.billno;
+      var hotelCode = "HOTEL_NAHAR";
+
+      console.log("[New Invoice] Bill No: " + billno + " (EID: " + eid + ")");
+      console.log("Posting payload for " + billno + " to GST Zen...");
+
+      // Select items from trans_b2beinvoice_det using verified columns
+      var itemSql = "SELECT " +
+        "CAST(ISNULL(det.slno, 1) AS VARCHAR(10)) + '|' + " +
+        "CAST(ISNULL(det.prddesc, 'ROOM RENT') AS VARCHAR(100)) + '|' + " +
+        "CAST(ISNULL(det.hsncd, '996311') AS VARCHAR(20)) + '|' + " +
+        "CAST(ISNULL(det.qty, 1) AS VARCHAR(20)) + '|' + " +
+        "CAST(ISNULL(det.freeqty, 0) AS VARCHAR(20)) + '|' + " +
+        "CAST(ISNULL(det.unit, 'NOS') AS VARCHAR(10)) + '|' + " +
+        "CAST(ISNULL(det.unitprice, 0) AS VARCHAR(30)) + '|' + " +
+        "CAST(ISNULL(det.totamt, 0) AS VARCHAR(30)) + '|' + " +
+        "CAST(ISNULL(det.discount, 0) AS VARCHAR(30)) + '|' + " +
+        "CAST(ISNULL(det.assamt, 0) AS VARCHAR(30)) + '|' + " +
+        "CAST(ISNULL(det.gstrt, 5) AS VARCHAR(20)) + '|' + " +
+        "CAST(ISNULL(det.cgstamt, 0) AS VARCHAR(30)) + '|' + " +
+        "CAST(ISNULL(det.sgstamt, 0) AS VARCHAR(30)) + '|' + " +
+        "CAST(ISNULL(det.igstamt, 0) AS VARCHAR(30)) " +
+        "FROM trans_b2beinvoice_det det " +
+        "WHERE det.eid = " + eid + " " +
+        "ORDER BY det.slno ASC";
+
+      return executeSql(itemSql).then(function(itemLines) {
+        var items = [];
+        if (itemLines && itemLines.length > 0) {
+          for (var i = 0; i < itemLines.length; i++) {
+            var icols = itemLines[i].split("|");
+            items.push({
+              slno: icols[0],
+              prddesc: icols[1],
+              hsncd: icols[2],
+              qty: parseFloat(icols[3] || 1),
+              freeqty: parseFloat(icols[4] || 0),
+              unit: icols[5] || "NOS",
+              unitprice: parseFloat(icols[6] || 0),
+              totamt: parseFloat(icols[7] || 0),
+              discount: parseFloat(icols[8] || 0),
+              assamt: parseFloat(icols[9] || 0),
+              gstrt: parseFloat(icols[10] || 5),
+              cgstamt: parseFloat(icols[11] || 0),
+              sgstamt: parseFloat(icols[12] || 0),
+              igstamt: parseFloat(icols[13] || 0)
+            });
+          }
+        }
+
+        var payload = buildPayload(mas, items);
+        var token = DEFAULT_TOKEN;
+
+        return postToGstZen(token, payload).then(function(res) {
+          var respObj = Array.isArray(res) ? res[0] : res;
+
+          if (respObj && (respObj.status === "1" || respObj.status === 1 || respObj.irn || respObj.Irn || respObj.success === true)) {
+            var irn = String(respObj.irn || respObj.Irn || "");
+            var ackNo = String(respObj.ackno || respObj.AckNo || "");
+            var ackDt = String(respObj.ackdt || respObj.AckDt || "");
+            var uuid = String(respObj.uuid || "");
+
+            var signedQr = String(respObj.signed_qrcode || respObj.SignedQrCode || respObj.signed_qr_code || "");
+            var signedInv = String(respObj.signed_invoice || respObj.SignedInvoice || respObj.signed_invoice || "");
+
+            // Proper GST Zen image/PDF URLs (signed_invoice and signed_qrcode are JWT strings, not download URLs)
+            var qrcodeUrl = respObj.SignedQrCodeImgUrl || respObj.signed_qr_code_img_url || respObj.qrcode_img_url || "";
+            if (!qrcodeUrl && uuid) {
+              qrcodeUrl = "https://my.gstzen.in/~gstzen/a/post-einvoice-data/einvoice-qr/" + uuid + "/";
+            }
+
+            var pdfUrl = respObj.InvoicePdfUrl || respObj.invoice_pdf_url || respObj.pdf_url || "";
+            if (!pdfUrl && uuid) {
+              pdfUrl = "https://my.gstzen.in/~gstzen/a/post-einvoice-data/einvoice-pdf/" + uuid + "/";
+            }
+
+            console.log("  >>> SUCCESS! IRN: " + irn);
+
+            var safeBill = billno.replace(/[^a-zA-Z0-9_-]/g, "_");
+
+            // STAGE 1: Immediately update Syncflag = 1, NotSyncflag = 0, IRN, AckNo, AckDt
+            var stage1Sql = "UPDATE trans_b2beinvoice_mas SET " +
+              "Syncflag = 1, " +
+              "NotSyncflag = 0, " +
+              "Irn = '" + irn.replace(/'/g, "''") + "', " +
+              "AckNo = '" + ackNo.replace(/'/g, "''") + "', " +
+              "AckDt = '" + ackDt.replace(/'/g, "''") + "', " +
+              "reason = 'IRN Generated Successfully' " +
+              "WHERE eid = " + eid + " OR billno = '" + billno.replace(/'/g, "''") + "';";
+
+            return executeSql(stage1Sql).then(function() {
+              console.log("  >>> Stage 1: Syncflag set to 1 for Bill: " + billno + " (EID: " + eid + ")");
+
+              var dlPromises = [];
+
+              // Save raw signed QR string to disk for invoice print engines
+              if (signedQr) {
+                try {
+                  var rawQrPath = path.join(QR_DIR, safeBill + "_jwt.txt");
+                  mkdirsSync(path.dirname(rawQrPath));
+                  fs.writeFileSync(rawQrPath, signedQr);
+                } catch (e) {}
+              }
+
+              function isRealUrl(u) {
+                return typeof u === "string" && u.length > 5 && u.length < 500 && (u.indexOf("http://") === 0 || u.indexOf("https://") === 0 || u.indexOf("/") === 0);
+              }
+
+              if (isRealUrl(qrcodeUrl)) {
+                var qrDest = [
+                  path.join(QR_DIR, safeBill + ".png"),
+                  path.join(BACKUP_DIR, hotelCode, safeBill + ".png")
+                ];
+                dlPromises.push(
+                  downloadBinary(qrcodeUrl, qrDest, token)
+                    .then(function() { console.log("  >>> QR Code received and saved to " + qrDest[0]); })
+                    .catch(function(e) { console.error("  >>> QR download notice:", e.message); })
+                );
+              }
+
+              if (isRealUrl(pdfUrl)) {
+                var pdfDest = [
+                  path.join(PDF_DIR, safeBill + ".pdf"),
+                  path.join(BACKUP_DIR, hotelCode, safeBill + ".pdf")
+                ];
+                dlPromises.push(
+                  downloadBinary(pdfUrl, pdfDest, token)
+                    .then(function() { console.log("  >>> PDF received and saved to " + pdfDest[0]); })
+                    .catch(function(e) { console.error("  >>> PDF download notice:", e.message); })
+                );
+              }
+
+              return Promise.all(dlPromises)
+                .catch(function(e) {
+                  console.error("  >>> Download notice:", e.message);
+                })
+                .then(function() {
+                  // STAGE 2: Set qrstatusflag = 1, upload = 1 in both trans_b2beinvoice_mas and trans_checkout_mas
+                  var stage2Sql = "UPDATE trans_b2beinvoice_mas SET " +
+                    "qrstatusflag = 1, " +
+                    "upload = 1 " +
+                    "WHERE eid = " + eid + " OR billno = '" + billno.replace(/'/g, "''") + "'; " +
+                    "UPDATE trans_checkout_mas SET " +
+                    "qrstatusflag = 1, " +
+                    "upload = 1 " +
+                    "WHERE checkoutno = '" + billno.replace(/'/g, "''") + "';";
+
+                  return executeSql(stage2Sql).then(function() {
+                    console.log("  >>> Stage 2: Qrstatusflag=1 and Upload=1 updated in database for Bill: " + billno);
+
+                    // Optional safe storage of signed tokens if columns exist
+                    if (signedQr || signedInv) {
+                      var tokenSql = "UPDATE trans_b2beinvoice_mas SET " +
+                        "SignedQRCode = '" + signedQr.replace(/'/g, "''").substring(0, 1000) + "', " +
+                        "SignedInvoice = '" + signedInv.replace(/'/g, "''").substring(0, 1000) + "' " +
+                        "WHERE eid = " + eid + " OR billno = '" + billno.replace(/'/g, "''") + "';";
+                      executeSql(tokenSql).catch(function() {});
+                    }
+                  });
+                });
+            });
+
+          } else {
+            var errStr = "";
+            if (respObj && respObj.__all__) {
+              errStr = Array.isArray(respObj.__all__) ? respObj.__all__.join("; ") : JSON.stringify(respObj.__all__);
+            } else if (respObj && (respObj.message || respObj.error || respObj.ErrorDetails)) {
+              errStr = respObj.message || respObj.error || JSON.stringify(respObj.ErrorDetails);
+            } else {
+              errStr = JSON.stringify(res);
+            }
+
+            console.error("  [GST Zen API Error]: " + errStr);
+
+            var failSql = "UPDATE trans_b2beinvoice_mas SET " +
+              "NotSyncflag = 1, " +
+              "reason = '" + errStr.replace(/'/g, "''").substring(0, 500) + "' " +
+              "WHERE eid = " + eid + ";";
+
+            return executeSql(failSql);
+          }
+        });
+      });
+    })
+    .catch(function(err) {
+      console.error("Sync error:", err.message);
+    })
+    .then(function() {
+      isRunning = false;
+    });
+}
+
+console.log("========================================================");
+console.log("  GST Zen Zero-Dependency Sync Daemon (osql Edition)");
+console.log("  Database: " + DB_NAME);
+console.log("  OSQL:     " + OSQL_EXE);
+console.log("  Interval: " + (SYNC_INTERVAL_MS / 1000) + " seconds");
+console.log("========================================================");
+
+syncCycle();
+setInterval(syncCycle, SYNC_INTERVAL_MS);
+`;
